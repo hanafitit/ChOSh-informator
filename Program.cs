@@ -129,8 +129,8 @@ Task HandleError(ITelegramBotClient botClient, Exception exception, Cancellation
 static async Task RunWebServer(CancellationToken ct)
 {
     var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-    var listener = new HttpListener();
-    listener.Prefixes.Add($"http://*:{port}/");
+    var listener = new System.Net.HttpListener();
+    listener.Prefixes.Add($"http://+:{port}/");
     listener.Start();
     Console.WriteLine($"Веб-сервер запущен на порту {port}.");
 
@@ -138,9 +138,9 @@ static async Task RunWebServer(CancellationToken ct)
     {
         try
         {
-            var context  = await listener.GetContextAsync();
+            var context = await listener.GetContextAsync();
             var response = context.Response;
-            var body     = Encoding.UTF8.GetBytes("OK");
+            var body = Encoding.UTF8.GetBytes("OK");
             response.ContentLength64 = body.Length;
             await response.OutputStream.WriteAsync(body, ct);
             response.OutputStream.Close();
