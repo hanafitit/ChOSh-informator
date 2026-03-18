@@ -1,0 +1,19 @@
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\ЧОШ информатор.exe
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\ЧОШ информатор.deps.json
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\ЧОШ информатор.runtimeconfig.json
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\ЧОШ информатор.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\ЧОШ информатор.pdb
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\System.Text.Json.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\Telegram.Bot.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\bin\Debug\net8.0\Telegram.Bot.AspNetCore.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.csproj.AssemblyReference.cache
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.AssemblyInfoInputs.cache
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.AssemblyInfo.cs
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.csproj.CoreCompileInputs.cache
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ инфо.C70BE51C.Up2Date
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\refint\ЧОШ информатор.dll
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.pdb
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ЧОШ информатор.genruntimeconfig.cache
+C:\Users\Байсангур\source\repos\ЧОШ информатор\obj\Debug\net8.0\ref\ЧОШ информатор.dll
