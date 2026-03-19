@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
+using System.Reflection.Emit;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +10,7 @@ using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using Microsoft.EntityFrameworkCore;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -83,6 +86,10 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 { ResizeKeyboard = true };
                 await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: scheduleKeyboard, cancellationToken: ct);
                 break;
+            case "Сегодня":
+                string today = DateTime.Now.DayOfWeek.ToString();
+
+                break;
 
             case "📊 Опросы":
                 await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
@@ -150,4 +157,28 @@ static async Task RunWebServer(CancellationToken ct)
     }
 
     listener.Stop();
+}
+public class Schedule
+{
+    public int Id { get; set; }
+    public string ClassName { get; set; }
+    public string DayOfWeek { get; set; }
+    public int LessonNumber { get; set; }
+    public string subject { get; set; }
+    public string StartTime { get; set; }
+
+
+}
+public class SchoolContext : DbContext
+{
+    public DbSet<Schedule> Schedules { get; set; } = null!;
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlite("Data Source=school.db");
+    }
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Schedule>().ToTable("Schedule");
+    }
 }
