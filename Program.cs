@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 Console.OutputEncoding = Encoding.UTF8;
 
 using var cts = new CancellationTokenSource();
+var userStates = new Dictionary<long, string>();
 
 Console.CancelKeyPress += (_, e) =>
 {
@@ -60,21 +61,52 @@ catch (Exception ex)
 // ══════════════════════════════════════════════
 async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
 {
+
     if (update.Message?.Text is { } text)
     {
         var chatId = update.Message.Chat.Id;
+        bool registrationName = true;
+        bool registrationClass = true;
+        bool registrationRole = true;
+        string Name;
+        string Class;
+        string Role;
 
         switch (text)
         {
             case "/start":
-                var keyboard = new ReplyKeyboardMarkup(new[]
                 {
-                    new[] { new KeyboardButton("📅 Расписание"), new KeyboardButton("📢 Объявления") },
-                    new[] { new KeyboardButton("📊 Опросы"),     new KeyboardButton("👤 Профиль") }
-                })
-                { ResizeKeyboard = true };
-                await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: keyboard, cancellationToken: ct);
-                break;
+                    User? found = null;
+                    using var db = new SchoolContext();
+                    var all = db.Users.ToList();
+                    var keyboard = new ReplyKeyboardMarkup(new[]
+                    {
+                        new[] { new KeyboardButton("📅 Расписание"), new KeyboardButton("📢 Объявления") },
+                        new[] { new KeyboardButton("📊 Опросы"),     new KeyboardButton("👤 Профиль") }
+                    })
+                    { ResizeKeyboard = true };
+                    foreach (var u in all)
+                    {
+                        if (u.TelegramId == chatId)
+                        {
+                            found = u;
+                            break;
+                        }
+                    }
+                    if (found != null)
+                    {
+                        await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: keyboard, cancellationToken: ct);
+                        
+
+                    }
+                    else
+                    {
+
+                        await botClient.SendMessage(chatId, "Добро пожаловать! Для начала зарегистрируйся.\nВведи своё имя:", cancellationToken: ct);
+                        userStates[chatId] = "waitingName";
+                    }
+                    break;
+                }
 
             case "📅 Расписание":
                 var scheduleKeyboard = new ReplyKeyboardMarkup(new[]
@@ -111,6 +143,22 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 })
                 { ResizeKeyboard = true };
                 await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: mainKeyboard, cancellationToken: ct);
+                break;
+            default:
+                if (userStates[chatId] == "waitingName")
+                {
+                    Name = text;
+                    registrationClass = false;
+                    break;
+                }
+                else if (userStates[chatId] == "waitingClass")
+                {
+                    Class = text;
+                }
+                else
+                {
+                    await botClient.SendMessage(chatId, "Используйте кнопки, чтобы управлять ботом", cancellationToken: ct);
+                }
                 break;
         }
     }
@@ -169,9 +217,18 @@ public class Schedule
 
 
 }
+public class User
+{
+    public int Id { get; set; }
+    public long TelegramId { get; set; }
+    public string FirstName { get; set; } = "";
+    public string ClassName { get; set; } = "";
+    public string Role { get; set; } = "student";
+}
 public class SchoolContext : DbContext
 {
-    public DbSet<Schedule> Schedules { get; set; } = null!;
+    public DbSet<Schedule> Schedules { get; set; } = null!; 
+    public DbSet<User> Users { get; set; } = null!;
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -180,5 +237,6 @@ public class SchoolContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Schedule>().ToTable("Schedule");
+        modelBuilder.Entity<User>().ToTable("Users");
     }
 }
