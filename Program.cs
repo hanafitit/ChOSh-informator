@@ -114,12 +114,41 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
             }
 
             case "Сегодня":
-            {
-                string today = DateTime.Now.DayOfWeek.ToString();
-                // TODO: получить класс пользователя из БД и показать расписание
-                await botClient.SendMessage(chatId, $"Сегодня: {today}", cancellationToken: ct);
-                break;
-            }
+                {
+                    using var db = new SchoolContext();
+
+                    // Получаем класс текущего пользователя
+                    var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+                    if (user != null)
+                    {
+                        string today = DateTime.Now.DayOfWeek.ToString();
+
+                        // Получаем все уроки для этого класса на текущий день
+                        var scheduleForToday = db.Schedules
+                            .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
+                            .OrderBy(s => s.LessonNumber)
+                            .ToList();
+
+                        if (scheduleForToday.Any())
+                        {
+                            var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
+                            foreach (var item in scheduleForToday)
+                            {
+                                sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                            }
+                            await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                        }
+                        else
+                        {
+                            await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
+                        }
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(chatId, "Вы не зарегистрированы! Пожалуйста, зарегистрируйтесь.", cancellationToken: ct);
+                    }
+                    break;
+                }
 
             case "📊 Опросы":
                 await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
