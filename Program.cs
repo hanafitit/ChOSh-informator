@@ -52,7 +52,7 @@ catch (Exception ex)
 // ═════════════════════════════════════v═════════
 async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
 {
-    string adminId = Environment.GetEnvironmentVariable("ADMIN_BOT")
+    string adminId = Environment.GetEnvironmentVariable("ADMIN_Id")
         ?? throw new Exception("ADMIN_BOT не задан!");
     if (update.Message?.Text is { } text)
     {
