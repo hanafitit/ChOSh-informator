@@ -12,7 +12,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using Microsoft.EntityFrameworkCore;
 
 Console.OutputEncoding = Encoding.UTF8;
-
 using var cts = new CancellationTokenSource();
 var userStates = new Dictionary<long, string>();
 var userNames  = new Dictionary<long, string>();
@@ -29,13 +28,22 @@ try
     var token = Environment.GetEnvironmentVariable("BOT_TOKEN")
         ?? throw new Exception("BOT_TOKEN не задан!");
 
-
     var bot = new TelegramBotClient(token);
+
+    // ✅ ИСПРАВЛЕНИЕ: Сбрасываем вебхук и старые сессии перед стартом
+    await bot.DeleteWebhook(dropPendingUpdates: true);
+    await Task.Delay(1000);
+
     Console.WriteLine("BOT STARTING...");
+
     bot.StartReceiving(
         updateHandler: HandleUpdate,
         errorHandler:  HandleError,
-        receiverOptions: new ReceiverOptions { AllowedUpdates = [] },
+        receiverOptions: new ReceiverOptions
+        {
+            AllowedUpdates = [],
+            DropPendingUpdates = true  // ✅ ИСПРАВЛЕНИЕ: Игнорируем старые апдейты
+        },
         cancellationToken: cts.Token
     );
 
@@ -59,14 +67,12 @@ catch (Exception ex)
 
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК СООБЩЕНИЙ
-// ═════════════════════════════════════v═════════
-
-
-
+// ══════════════════════════════════════════════
 async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
 {
     string adminId = Environment.GetEnvironmentVariable("ADMIN_BOT")
         ?? throw new Exception("ADMIN_BOT не задан!");
+
     if (update.Message?.Text is { } text)
     {
         var chatId = update.Message.Chat.Id;
@@ -78,7 +84,6 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 User? found = null;
                 using var db = new SchoolContext();
                 var all = db.Users.ToList();
-
                 foreach (var u in all)
                 {
                     if (u.TelegramId == chatId)
@@ -118,56 +123,52 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: scheduleKeyboard, cancellationToken: ct);
                 break;
             }
+
             case "/admin":
+            {
+                if (chatId.ToString() == adminId)
                 {
-                    if (chatId.ToString() == adminId)
-                    {
-                        break;
-                    }
-                    else
-                    {
-                        await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
-                        break;
-                    }
-
-                }
-
-            case "Сегодня":
-                {
-                    using var db = new SchoolContext();
-
-                    // Получаем класс текущего пользователя
-                    var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                    if (user != null)
-                    {
-                        string today = DateTime.Now.DayOfWeek.ToString();
-
-                        // Получаем все уроки для этого класса на текущий день
-                        var scheduleForToday = db.Schedules
-                            .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
-                            .OrderBy(s => s.LessonNumber)
-                            .ToList();
-
-                        if (scheduleForToday.Any())
-                        {
-                            var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
-                            foreach (var item in scheduleForToday)
-                            {
-                                sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-                            }
-                            await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
-                        }
-                        else
-                        {
-                            await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
-                        }
-                    }
-                    else
-                    {
-                        await botClient.SendMessage(chatId, "Вы не зарегистрированы! Пожалуйста, зарегистрируйтесь.", cancellationToken: ct);
-                    }
                     break;
                 }
+                else
+                {
+                    await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+                    break;
+                }
+            }
+
+            case "Сегодня":
+            {
+                using var db = new SchoolContext();
+                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+                if (user != null)
+                {
+                    string today = DateTime.Now.DayOfWeek.ToString();
+                    var scheduleForToday = db.Schedules
+                        .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
+                        .OrderBy(s => s.LessonNumber)
+                        .ToList();
+
+                    if (scheduleForToday.Any())
+                    {
+                        var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
+                        foreach (var item in scheduleForToday)
+                        {
+                            sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                        }
+                        await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
+                    }
+                }
+                else
+                {
+                    await botClient.SendMessage(chatId, "Вы не зарегистрированы! Пожалуйста, зарегистрируйтесь.", cancellationToken: ct);
+                }
+                break;
+            }
 
             case "📊 Опросы":
                 await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
