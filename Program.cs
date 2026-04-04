@@ -29,6 +29,7 @@ try
     var token = Environment.GetEnvironmentVariable("BOT_TOKEN")
         ?? throw new Exception("BOT_TOKEN не задан!");
 
+
     var bot = new TelegramBotClient(token);
 
     bot.StartReceiving(
@@ -58,9 +59,14 @@ catch (Exception ex)
 
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК СООБЩЕНИЙ
-// ══════════════════════════════════════════════
+// ═════════════════════════════════════v═════════
+
+
+
 async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
 {
+    string adminId = Environment.GetEnvironmentVariable("ADMIN_BOT")
+        ?? throw new Exception("ADMIN_BOT не задан!");
     if (update.Message?.Text is { } text)
     {
         var chatId = update.Message.Chat.Id;
@@ -112,6 +118,19 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: scheduleKeyboard, cancellationToken: ct);
                 break;
             }
+            case "/admin":
+                {
+                    if (chatId.ToString() == adminId)
+                    {
+                        break;
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+                        break;
+                    }
+
+                }
 
             case "Сегодня":
                 {
