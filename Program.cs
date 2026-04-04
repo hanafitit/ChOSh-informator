@@ -31,7 +31,7 @@ try
 
 
     var bot = new TelegramBotClient(token);
-
+    Console.WriteLine("BOT STARTING...");
     bot.StartReceiving(
         updateHandler: HandleUpdate,
         errorHandler:  HandleError,
