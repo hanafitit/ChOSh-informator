@@ -10,48 +10,31 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using Microsoft.EntityFrameworkCore;
-
 Console.OutputEncoding = Encoding.UTF8;
 using var cts = new CancellationTokenSource();
 var userStates = new Dictionary<long, string>();
 var userNames  = new Dictionary<long, string>();
-
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
     Console.WriteLine("Остановка...");
     cts.Cancel();
 };
-
 try
 {
     var token = Environment.GetEnvironmentVariable("BOT_TOKEN")
         ?? throw new Exception("BOT_TOKEN не задан!");
-
     var bot = new TelegramBotClient(token);
-
-    // ✅ ИСПРАВЛЕНИЕ: Сбрасываем вебхук и старые сессии перед стартом
-    await bot.DeleteWebhook(dropPendingUpdates: true);
-    await Task.Delay(1000);
-
     Console.WriteLine("BOT STARTING...");
-
     bot.StartReceiving(
         updateHandler: HandleUpdate,
         errorHandler:  HandleError,
-        receiverOptions: new ReceiverOptions
-        {
-            AllowedUpdates = [],
-            DropPendingUpdates = true  // ✅ ИСПРАВЛЕНИЕ: Игнорируем старые апдейты
-        },
+        receiverOptions: new ReceiverOptions { AllowedUpdates = [] },
         cancellationToken: cts.Token
     );
-
     var me = await bot.GetMe();
     Console.WriteLine($"Бот запущен: @{me.Username}");
-
     _ = RunWebServer(cts.Token);
-
     Console.WriteLine("Для остановки нажмите Ctrl+C.");
     await Task.Delay(Timeout.Infinite, cts.Token);
 }
@@ -64,19 +47,16 @@ catch (Exception ex)
     Console.WriteLine($"Критическая ошибка: {ex.Message}");
     Environment.Exit(1);
 }
-
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК СООБЩЕНИЙ
-// ══════════════════════════════════════════════
+// ═════════════════════════════════════v═════════
 async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
 {
     string adminId = Environment.GetEnvironmentVariable("ADMIN_BOT")
         ?? throw new Exception("ADMIN_BOT не задан!");
-
     if (update.Message?.Text is { } text)
     {
         var chatId = update.Message.Chat.Id;
-
         switch (text)
         {
             case "/start":
@@ -92,7 +72,6 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                         break;
                     }
                 }
-
                 if (found != null)
                 {
                     var keyboard = new ReplyKeyboardMarkup(new[]
@@ -110,7 +89,6 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 }
                 break;
             }
-
             case "📅 Расписание":
             {
                 var scheduleKeyboard = new ReplyKeyboardMarkup(new[]
@@ -123,65 +101,60 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: scheduleKeyboard, cancellationToken: ct);
                 break;
             }
-
             case "/admin":
-            {
-                if (chatId.ToString() == adminId)
                 {
-                    break;
-                }
-                else
-                {
-                    await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
-                    break;
-                }
-            }
-
-            case "Сегодня":
-            {
-                using var db = new SchoolContext();
-                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                if (user != null)
-                {
-                    string today = DateTime.Now.DayOfWeek.ToString();
-                    var scheduleForToday = db.Schedules
-                        .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
-                        .OrderBy(s => s.LessonNumber)
-                        .ToList();
-
-                    if (scheduleForToday.Any())
+                    if (chatId.ToString() == adminId)
                     {
-                        var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
-                        foreach (var item in scheduleForToday)
-                        {
-                            sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-                        }
-                        await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                        break;
                     }
                     else
                     {
-                        await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
+                        await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+                        break;
                     }
                 }
-                else
+            case "Сегодня":
                 {
-                    await botClient.SendMessage(chatId, "Вы не зарегистрированы! Пожалуйста, зарегистрируйтесь.", cancellationToken: ct);
+                    using var db = new SchoolContext();
+                    // Получаем класс текущего пользователя
+                    var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+                    if (user != null)
+                    {
+                        string today = DateTime.Now.DayOfWeek.ToString();
+                        // Получаем все уроки для этого класса на текущий день
+                        var scheduleForToday = db.Schedules
+                            .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
+                            .OrderBy(s => s.LessonNumber)
+                            .ToList();
+                        if (scheduleForToday.Any())
+                        {
+                            var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
+                            foreach (var item in scheduleForToday)
+                            {
+                                sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                            }
+                            await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                        }
+                        else
+                        {
+                            await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
+                        }
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(chatId, "Вы не зарегистрированы! Пожалуйста, зарегистрируйтесь.", cancellationToken: ct);
+                    }
+                    break;
                 }
-                break;
-            }
-
             case "📊 Опросы":
                 await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
                 break;
-
             case "📢 Объявления":
                 await botClient.SendMessage(chatId, "Здесь будут объявления", cancellationToken: ct);
                 break;
-
             case "👤 Профиль":
                 await botClient.SendMessage(chatId, $"Твой ID: {chatId}", cancellationToken: ct);
                 break;
-
             case "⬅️ Назад":
             {
                 var mainKeyboard = new ReplyKeyboardMarkup(new[]
@@ -193,7 +166,6 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: mainKeyboard, cancellationToken: ct);
                 break;
             }
-
             default:
             {
                 if (userStates.ContainsKey(chatId) && userStates[chatId] == "waitingName")
@@ -206,7 +178,6 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                 {
                     string name      = userNames[chatId];
                     string className = text;
-
                     using var db = new SchoolContext();
                     db.Users.Add(new User
                     {
@@ -216,10 +187,8 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
                         Role       = "student"
                     });
                     db.SaveChanges();
-
                     userStates.Remove(chatId);
                     userNames.Remove(chatId);
-
                     var keyboard = new ReplyKeyboardMarkup(new[]
                     {
                         new[] { new KeyboardButton("📅 Расписание"), new KeyboardButton("📢 Объявления") },
@@ -236,13 +205,11 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
             }
         }
     }
-
     if (update.CallbackQuery is { } query)
     {
         await botClient.AnswerCallbackQuery(query.Id, cancellationToken: ct);
     }
 }
-
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК ОШИБОК
 // ══════════════════════════════════════════════
@@ -251,7 +218,6 @@ Task HandleError(ITelegramBotClient botClient, Exception exception, Cancellation
     Console.WriteLine($"Ошибка: {exception.Message}");
     return Task.CompletedTask;
 }
-
 // ══════════════════════════════════════════════
 // ВЕБ-СЕРВЕР ДЛЯ RENDER
 // ══════════════════════════════════════════════
@@ -262,7 +228,6 @@ static async Task RunWebServer(CancellationToken ct)
     listener.Prefixes.Add($"http://+:{port}/");
     listener.Start();
     Console.WriteLine($"Веб-сервер запущен на порту {port}.");
-
     while (!ct.IsCancellationRequested)
     {
         try
@@ -277,10 +242,8 @@ static async Task RunWebServer(CancellationToken ct)
         catch (OperationCanceledException) { break; }
         catch { }
     }
-
     listener.Stop();
 }
-
 // ══════════════════════════════════════════════
 // МОДЕЛИ
 // ══════════════════════════════════════════════
@@ -294,7 +257,6 @@ public class Schedule
     public string StartTime    { get; set; } = "";
     public string EndTime      { get; set; } = "";
 }
-
 public class User
 {
     public int    Id         { get; set; }
@@ -303,18 +265,16 @@ public class User
     public string ClassName  { get; set; } = "";
     public string Role       { get; set; } = "student";
 }
-
 public class SchoolContext : DbContext
 {
     public DbSet<Schedule> Schedules { get; set; } = null!;
     public DbSet<User>     Users     { get; set; } = null!;
-
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseSqlite("Data Source=school.db");
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Schedule>().ToTable("Schedule");
         modelBuilder.Entity<User>().ToTable("Users");
     }
 }
+
