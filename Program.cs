@@ -224,6 +224,8 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
 Task HandleError(ITelegramBotClient botClient, Exception exception, CancellationToken ct)
 {
     Console.WriteLine($"Ошибка: {exception.Message}");
+    if (exception.Message.Contains("Conflict"))
+        Thread.Sleep(5000); // подождать, пока старый экземпляр умрёт
     return Task.CompletedTask;
 }
 // ══════════════════════════════════════════════
