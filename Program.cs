@@ -26,9 +26,17 @@ try
         ?? throw new Exception("BOT_TOKEN не задан!");
     var bot = new TelegramBotClient(token);
     Console.WriteLine("BOT STARTING...");
+
+    // Сбрасываем webhook и удаляем застрявшие обновления
+    await bot.DeleteWebhook(dropPendingUpdates: true);
+    Console.WriteLine("Webhook сброшен.");
+
+    // Небольшая пауза, чтобы старый экземпляр успел завершиться
+    await Task.Delay(3000);
+
     bot.StartReceiving(
         updateHandler: HandleUpdate,
-        errorHandler:  HandleError,
+        errorHandler: HandleError,
         receiverOptions: new ReceiverOptions { AllowedUpdates = [] },
         cancellationToken: cts.Token
     );
