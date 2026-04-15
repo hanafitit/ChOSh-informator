@@ -175,7 +175,8 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
             case "/admin":
             {
                 if (chatId.ToString() == adminId)
-                    await botClient.SendMessage(chatId, "Добро пожаловать, администратор!", cancellationToken: ct);
+                    await botClient.SendMessage(chatId, "Добро пожаловать, администратор!\nВведите /start для возвращения меню пользователя", cancellationToken: ct);
+                    
                 else
                     await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
                 break;
