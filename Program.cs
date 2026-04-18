@@ -99,11 +99,23 @@ async Task RunWebServer(ITelegramBotClient bot, GitHubBackup backup, Cancellatio
             var req     = context.Request;
             var res     = context.Response;
 
-            if (req.HttpMethod == "GET")
+            if (req.HttpMethod == "GET" && req.Url?.AbsolutePath == "/getdb")
             {
-                var body = Encoding.UTF8.GetBytes("OK");
-                res.ContentLength64 = body.Length;
-                await res.OutputStream.WriteAsync(body, ct);
+                var key = req.QueryString["key"];
+                var secretKey = Environment.GetEnvironmentVariable("DB_KEY");
+
+                if (key != secretKey)
+                {
+                    res.StatusCode = 403;
+                    res.OutputStream.Close();
+                    continue;
+                }
+
+                byte[] dbBytes = await File.ReadAllBytesAsync("school.db");
+                res.ContentType = "application/octet-stream";
+                res.AddHeader("Content-Disposition", "attachment; filename=school.db");
+                res.ContentLength64 = dbBytes.Length;
+                await res.OutputStream.WriteAsync(dbBytes, ct);
                 res.OutputStream.Close();
                 continue;
             }
