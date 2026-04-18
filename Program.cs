@@ -414,20 +414,23 @@ public class GitHubBackup
         try
         {
             var client = CreateClient();
-            byte[] bytes  = await File.ReadAllBytesAsync(DbPath);
+            byte[] bytes = await File.ReadAllBytesAsync(DbPath);
             string content = Convert.ToBase64String(bytes);
 
+            RepositoryContentInfo? existing = null;
             try
             {
-                var existing = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
-                await client.Repository.Content.UpdateFile(_owner, _repo, FilePath,
-                    new UpdateFileRequest($"db backup {DateTime.UtcNow:yyyy-MM-dd HH:mm}", content, existing[0].Sha));
+                var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
+                existing = contents[0];
             }
-            catch (NotFoundException)
-            {
+            catch (NotFoundException) { }
+
+            if (existing != null)
+                await client.Repository.Content.UpdateFile(_owner, _repo, FilePath,
+                    new UpdateFileRequest($"db backup {DateTime.UtcNow:yyyy-MM-dd HH:mm}", content, existing.Sha));
+            else
                 await client.Repository.Content.CreateFile(_owner, _repo, FilePath,
                     new CreateFileRequest($"db backup {DateTime.UtcNow:yyyy-MM-dd HH:mm}", content));
-            }
 
             Console.WriteLine($"[Backup] БД сохранена в GitHub: {DateTime.UtcNow:HH:mm:ss}");
         }
@@ -441,9 +444,13 @@ public class GitHubBackup
     {
         try
         {
-            var client   = CreateClient();
+            var client = CreateClient();
             var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
-            byte[] bytes = Convert.FromBase64String(contents[0].EncodedContent.Replace("\n", "").Replace("\r", ""));
+            string base64 = contents[0].EncodedContent
+                .Replace("\n", "")
+                .Replace("\r", "")
+                .Replace(" ", "");
+            byte[] bytes = Convert.FromBase64String(base64);
             await File.WriteAllBytesAsync(DbPath, bytes);
             Console.WriteLine("[Restore] БД восстановлена из GitHub.");
         }
