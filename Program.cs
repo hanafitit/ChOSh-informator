@@ -11,6 +11,7 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using Microsoft.EntityFrameworkCore;
+using Octokit;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -36,6 +37,28 @@ try
 
     var bot = new TelegramBotClient(token);
 
+    // GitHub backup
+    var backup = new GitHubBackup(
+        owner: Environment.GetEnvironmentVariable("GH_OWNER") ?? throw new Exception("GH_OWNER не задан"),
+        repo:  Environment.GetEnvironmentVariable("GH_REPO")  ?? throw new Exception("GH_REPO не задан"),
+        ghToken: Environment.GetEnvironmentVariable("GH_TOKEN") ?? throw new Exception("GH_TOKEN не задан")
+    );
+
+    // При старте восстанавливаем БД из GitHub
+    await backup.RestoreAsync();
+
+    // Ночной бэкап в 03:00 UTC
+    _ = Task.Run(async () =>
+    {
+        while (!cts.Token.IsCancellationRequested)
+        {
+            var now  = DateTime.UtcNow;
+            var next = DateTime.UtcNow.Date.AddDays(now.Hour >= 3 ? 1 : 0).AddHours(3);
+            await Task.Delay(next - now, cts.Token);
+            await backup.BackupAsync();
+        }
+    });
+
     Console.WriteLine("BOT STARTING...");
 
     string webhookUrl = $"{appUrl.TrimEnd('/')}/bot";
@@ -45,7 +68,7 @@ try
     var me = await bot.GetMe();
     Console.WriteLine($"Бот запущен: @{me.Username}");
 
-    await RunWebServer(bot, cts.Token);
+    await RunWebServer(bot, backup, cts.Token);
 }
 catch (OperationCanceledException)
 {
@@ -60,7 +83,7 @@ catch (Exception ex)
 // ══════════════════════════════════════════════
 // ВЕБ-СЕРВЕР
 // ══════════════════════════════════════════════
-async Task RunWebServer(ITelegramBotClient bot, CancellationToken ct)
+async Task RunWebServer(ITelegramBotClient bot, GitHubBackup backup, CancellationToken ct)
 {
     var port     = Environment.GetEnvironmentVariable("PORT") ?? "8080";
     var listener = new HttpListener();
@@ -102,7 +125,7 @@ async Task RunWebServer(ITelegramBotClient bot, CancellationToken ct)
                             PropertyNameCaseInsensitive = true
                         });
                         if (update != null)
-                            await HandleUpdate(bot, update, ct);
+                            await HandleUpdate(bot, backup, update, ct);
                     }
                     catch (Exception ex)
                     {
@@ -129,7 +152,7 @@ async Task RunWebServer(ITelegramBotClient bot, CancellationToken ct)
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК СООБЩЕНИЙ
 // ══════════════════════════════════════════════
-async Task HandleUpdate(ITelegramBotClient botClient, Update update, CancellationToken ct)
+async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Update update, CancellationToken ct)
 {
     string adminId = Environment.GetEnvironmentVariable("ADMIN_Id")
         ?? throw new Exception("ADMIN_Id не задан!");
@@ -175,8 +198,20 @@ async Task HandleUpdate(ITelegramBotClient botClient, Update update, Cancellatio
             case "/admin":
             {
                 if (chatId.ToString() == adminId)
-                    await botClient.SendMessage(chatId, "Добро пожаловать, администратор!\nВведите /start для возвращения меню пользователя", cancellationToken: ct);
-                    
+                    await botClient.SendMessage(chatId, "Добро пожаловать, администратор!", cancellationToken: ct);
+                else
+                    await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+                break;
+            }
+
+            case "/backup":
+            {
+                if (chatId.ToString() == adminId)
+                {
+                    await botClient.SendMessage(chatId, "⏳ Сохраняю БД...", cancellationToken: ct);
+                    await backup.BackupAsync();
+                    await botClient.SendMessage(chatId, "✅ БД сохранена в GitHub!", cancellationToken: ct);
+                }
                 else
                     await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
                 break;
@@ -343,6 +378,80 @@ static ReplyKeyboardMarkup MainKeyboard() =>
         new[] { new KeyboardButton("📊 Опросы"),     new KeyboardButton("👤 Профиль") }
     })
     { ResizeKeyboard = true };
+
+// ══════════════════════════════════════════════
+// GITHUB BACKUP
+// ══════════════════════════════════════════════
+public class GitHubBackup
+{
+    private readonly string _owner;
+    private readonly string _repo;
+    private readonly string _token;
+    private const string DbPath   = "school.db";
+    private const string FilePath = "backups/school.db";
+
+    public GitHubBackup(string owner, string repo, string ghToken)
+    {
+        _owner = owner;
+        _repo  = repo;
+        _token = ghToken;
+    }
+
+    public async Task BackupAsync()
+    {
+        try
+        {
+            var client = CreateClient();
+            byte[] bytes  = await File.ReadAllBytesAsync(DbPath);
+            string content = Convert.ToBase64String(bytes);
+
+            try
+            {
+                var existing = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
+                await client.Repository.Content.UpdateFile(_owner, _repo, FilePath,
+                    new UpdateFileRequest($"db backup {DateTime.UtcNow:yyyy-MM-dd HH:mm}", content, existing[0].Sha));
+            }
+            catch (NotFoundException)
+            {
+                await client.Repository.Content.CreateFile(_owner, _repo, FilePath,
+                    new CreateFileRequest($"db backup {DateTime.UtcNow:yyyy-MM-dd HH:mm}", content));
+            }
+
+            Console.WriteLine($"[Backup] БД сохранена в GitHub: {DateTime.UtcNow:HH:mm:ss}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Backup] Ошибка: {ex.Message}");
+        }
+    }
+
+    public async Task RestoreAsync()
+    {
+        try
+        {
+            var client   = CreateClient();
+            var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
+            byte[] bytes = Convert.FromBase64String(contents[0].EncodedContent);
+            await File.WriteAllBytesAsync(DbPath, bytes);
+            Console.WriteLine("[Restore] БД восстановлена из GitHub.");
+        }
+        catch (NotFoundException)
+        {
+            Console.WriteLine("[Restore] Бэкапа нет — используется локальная БД из образа.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Restore] Ошибка: {ex.Message}");
+        }
+    }
+
+    private GitHubClient CreateClient()
+    {
+        var client = new GitHubClient(new ProductHeaderValue("SchoolBot"));
+        client.Credentials = new Credentials(_token);
+        return client;
+    }
+}
 
 // ══════════════════════════════════════════════
 // МОДЕЛИ
