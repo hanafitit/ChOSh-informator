@@ -449,11 +449,12 @@ public class GitHubBackup
         {
             var client = CreateClient();
             var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
-            string base64 = contents[0].EncodedContent
-                .Replace("\n", "")
-                .Replace("\r", "")
-                .Replace(" ", "");
+            Console.WriteLine($"[Restore] EncodedContent длина: {contents[0].EncodedContent.Length}");
+            string base64 = contents[0].EncodedContent.Replace("\n", "").Replace("\r", "").Replace(" ", "");
+            Console.WriteLine($"[Restore] После очистки длина: {base64.Length}");
             byte[] bytes = Convert.FromBase64String(base64);
+            Console.WriteLine($"[Restore] Размер файла: {bytes.Length} байт");
+            
             await File.WriteAllBytesAsync(DbPath, bytes);
             Console.WriteLine("[Restore] БД восстановлена из GitHub.");
         }
