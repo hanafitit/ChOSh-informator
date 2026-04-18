@@ -413,9 +413,12 @@ public class GitHubBackup
     {
         try
         {
+
             var client = CreateClient();
             byte[] bytes = await File.ReadAllBytesAsync(DbPath);
+            Console.WriteLine($"[Backup] Размер файла: {bytes.Length} байт");
             string content = Convert.ToBase64String(bytes);
+            Console.WriteLine($"[Backup] Base64 длина: {content.Length}");
 
             RepositoryContentInfo? existing = null;
             try
