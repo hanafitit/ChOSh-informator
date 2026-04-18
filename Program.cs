@@ -449,12 +449,20 @@ public class GitHubBackup
         {
             var client = CreateClient();
             var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
-            Console.WriteLine($"[Restore] EncodedContent длина: {contents[0].EncodedContent.Length}");
-            string base64 = contents[0].EncodedContent.Replace("\n", "").Replace("\r", "").Replace(" ", "");
-            Console.WriteLine($"[Restore] После очистки длина: {base64.Length}");
+            string base64 = contents[0].EncodedContent
+                .Replace("\n", "")
+                .Replace("\r", "")
+                .Replace(" ", "");
+
+            // Декодируем дважды если нужно
             byte[] bytes = Convert.FromBase64String(base64);
-            Console.WriteLine($"[Restore] Размер файла: {bytes.Length} байт");
-            
+            string decoded = System.Text.Encoding.UTF8.GetString(bytes);
+            if (decoded.StartsWith("U1FM") || !decoded.StartsWith("SQLite"))
+            {
+                // Это ещё раз base64
+                bytes = Convert.FromBase64String(decoded.Replace("\n", "").Replace("\r", "").Replace(" ", ""));
+            }
+
             await File.WriteAllBytesAsync(DbPath, bytes);
             Console.WriteLine("[Restore] БД восстановлена из GitHub.");
         }
