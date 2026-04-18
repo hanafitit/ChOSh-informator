@@ -443,7 +443,7 @@ public class GitHubBackup
         {
             var client   = CreateClient();
             var contents = await client.Repository.Content.GetAllContents(_owner, _repo, FilePath);
-            byte[] bytes = Convert.FromBase64String(contents[0].EncodedContent);
+            byte[] bytes = Convert.FromBase64String(contents[0].EncodedContent.Replace("\n", ""));
             await File.WriteAllBytesAsync(DbPath, bytes);
             Console.WriteLine("[Restore] БД восстановлена из GitHub.");
         }
