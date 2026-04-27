@@ -188,7 +188,7 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                     await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: MainKeyboard(), cancellationToken: ct);
                 else
                 {
-                    await botClient.SendMessage(chatId, "Добро пожаловать! Для начала зарегистрируйся.\nВведи своё имя:", cancellationToken: ct);
+                    await botClient.SendMessage(chatId, "👋 Добро пожаловать! Для начала зарегистрируйся.\n\nВведи своё имя:", replyMarkup: new ReplyKeyboardRemove(), cancellationToken: ct);
                     userStates[chatId] = "waitingName";
                 }
                 break;
@@ -347,9 +347,19 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                 {
                     userNames[chatId]  = text;
                     userStates[chatId] = "waitingClass";
-                    await botClient.SendMessage(chatId, "Теперь введи свой класс (например: 10А):", cancellationToken: ct);
+
+                    var classKeyboard = new ReplyKeyboardMarkup(new[]
+                    {
+                        new[] { new KeyboardButton("5"),  new KeyboardButton("6"),  new KeyboardButton("7") },
+                        new[] { new KeyboardButton("8"),  new KeyboardButton("9") },
+                        new[] { new KeyboardButton("10"), new KeyboardButton("11") }
+                    })
+                    { ResizeKeyboard = true };
+
+                    await botClient.SendMessage(chatId, $"Отлично, {text}! 👇 Теперь выбери свой класс:", replyMarkup: classKeyboard, cancellationToken: ct);
                 }
-                else if (userStates.TryGetValue(chatId, out state) && state == "waitingClass")
+                else if (userStates.TryGetValue(chatId, out state) && state == "waitingClass"
+                         && new[] {"5","6","7","8","9","10","11"}.Contains(text))
                 {
                     string name      = userNames[chatId];
                     string className = text;
@@ -367,7 +377,7 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                     userStates.Remove(chatId);
                     userNames.Remove(chatId);
 
-                    await botClient.SendMessage(chatId, $"Отлично, {name}! Регистрация завершена.", replyMarkup: MainKeyboard(), cancellationToken: ct);
+                    await botClient.SendMessage(chatId, $"✅ Готово, {name}! Ты зарегистрирован в {className} классе.", replyMarkup: MainKeyboard(), cancellationToken: ct);
                 }
                 else
                     await botClient.SendMessage(chatId, "Используйте кнопки, чтобы управлять ботом", cancellationToken: ct);
