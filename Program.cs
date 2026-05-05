@@ -59,6 +59,10 @@ try
         }
     });
 
+    // Будильник — уведомления за 5 минут до урока
+    var alarm = new Alarm(bot, minutesBefore: 5);
+    _ = alarm.RunAsync(cts.Token);
+
     Console.WriteLine("BOT STARTING...");
 
     string webhookUrl = $"{appUrl.TrimEnd('/')}/bot";
@@ -289,9 +293,21 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                 var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
                 if (user != null)
                 {
+                    var dayOrder = new Dictionary<string, int>
+                    {
+                        ["Monday"]    = 1,
+                        ["Tuesday"]   = 2,
+                        ["Wednesday"] = 3,
+                        ["Thursday"]  = 4,
+                        ["Friday"]    = 5,
+                        ["Saturday"]  = 6,
+                        ["Sunday"]    = 7
+                    };
+
                     var lessons = db.Schedules
                         .Where(s => s.ClassName == user.ClassName)
-                        .OrderBy(s => s.DayOfWeek)
+                        .ToList()
+                        .OrderBy(s => dayOrder.TryGetValue(s.DayOfWeek, out var o) ? o : 99)
                         .ThenBy(s => s.LessonNumber)
                         .ToList();
 
@@ -358,8 +374,9 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
 
                     await botClient.SendMessage(chatId, $"Отлично, {text}! 👇 Теперь выбери свой класс:", replyMarkup: classKeyboard, cancellationToken: ct);
                 }
-                else if (userStates.TryGetValue(chatId, out state) && state == "waitingClass"
-                         && new[] {"5","6","7","8","9","10","11"}.Contains(text))
+                else if (userStates.TryGetValue(chatId, out state)
+                        && state == "waitingClass"
+                        && new[] { "5", "6", "7", "8", "9", "10", "11" }.Contains(text))
                 {
                     string name      = userNames[chatId];
                     string className = text;
@@ -423,7 +440,6 @@ public class GitHubBackup
     {
         try
         {
-
             var client = CreateClient();
             byte[] bytes = await File.ReadAllBytesAsync(DbPath);
             Console.WriteLine($"[Backup] Размер файла: {bytes.Length} байт");
