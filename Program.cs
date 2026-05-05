@@ -59,8 +59,8 @@ try
         }
     });
 
-    // Будильник — уведомления за 5 минут до урока
-    var alarm = new Alarm(bot, minutesBefore: 5);
+    // Будильник — уведомления перед длинными переменами
+    var alarm = new Alarm(bot);
     _ = alarm.RunAsync(cts.Token);
 
     Console.WriteLine("BOT STARTING...");
@@ -141,7 +141,7 @@ async Task RunWebServer(ITelegramBotClient bot, GitHubBackup backup, Cancellatio
                             PropertyNameCaseInsensitive = true
                         });
                         if (update != null)
-                            await HandleUpdate(bot, backup, update, ct);
+                            await HandleUpdate(bot, backup, update, userStates, userNames, ct);
                     }
                     catch (Exception ex)
                     {
@@ -168,238 +168,310 @@ async Task RunWebServer(ITelegramBotClient bot, GitHubBackup backup, Cancellatio
 // ══════════════════════════════════════════════
 // ОБРАБОТЧИК СООБЩЕНИЙ
 // ══════════════════════════════════════════════
-async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Update update, CancellationToken ct)
+async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Update update,
+    Dictionary<long, string> userStates, Dictionary<long, string> userNames,
+    CancellationToken ct)
 {
     string adminId = Environment.GetEnvironmentVariable("ADMIN_Id")
         ?? throw new Exception("ADMIN_Id не задан!");
 
-    if (update.Message?.Text is { } text)
+    var msg    = update.Message;
+    var chatId = msg?.Chat.Id ?? update.CallbackQuery?.Message?.Chat.Id ?? 0;
+    if (chatId == 0) return;
+
+    bool isAdmin = chatId.ToString() == adminId;
+
+    // ── Получаем текст и фото из любого сообщения ──────────────────────────
+    string? text    = msg?.Text ?? msg?.Caption;           // текст или подпись к фото
+    string? photoId = msg?.Photo?.LastOrDefault()?.FileId; // самое большое фото (если есть)
+
+    // ── Если админ ждёт объявление — обрабатываем ЛЮбое его сообщение ──────
+    if (isAdmin && userStates.TryGetValue(chatId, out var adminState) && adminState == "waitingAnnouncement")
     {
-        var chatId = update.Message.Chat.Id;
-
-        switch (text)
+        // Должен прийти хотя бы текст или фото
+        if (text == null && photoId == null)
         {
-            case "/start":
-            {
-                User? found = null;
-                using var db = new SchoolContext();
-                foreach (var u in db.Users.ToList())
-                {
-                    if (u.TelegramId == chatId) { found = u; break; }
-                }
+            await botClient.SendMessage(chatId, "Отправь текст или фото (можно с подписью).", cancellationToken: ct);
+            return;
+        }
 
-                if (found != null)
-                    await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: MainKeyboard(), cancellationToken: ct);
+        userStates.Remove(chatId);
+
+        using var db = new SchoolContext();
+        var allUsers = db.Users.ToList();
+        int sent = 0, failed = 0;
+
+        foreach (var u in allUsers)
+        {
+            try
+            {
+                if (photoId != null)
+                    await botClient.SendPhoto(u.TelegramId,
+                        InputFile.FromFileId(photoId),
+                        caption: text,
+                        cancellationToken: ct);
                 else
-                {
-                    await botClient.SendMessage(chatId, "👋 Добро пожаловать! Для начала зарегистрируйся.\n\nВведи своё имя:", replyMarkup: new ReplyKeyboardRemove(), cancellationToken: ct);
-                    userStates[chatId] = "waitingName";
-                }
+                    await botClient.SendMessage(u.TelegramId, text!, cancellationToken: ct);
+                sent++;
+            }
+            catch
+            {
+                failed++;
+            }
+        }
+
+        await botClient.SendMessage(chatId,
+            $"✅ Объявление отправлено!\n👤 Доставлено: {sent}\n❌ Ошибок: {failed}",
+            replyMarkup: AdminKeyboard(), cancellationToken: ct);
+        return;
+    }
+
+    // ── Только текстовые команды/кнопки дальше ─────────────────────────────
+    if (text == null) return;
+
+    switch (text)
+    {
+        // ── /start ──────────────────────────────────────────────────────────
+        case "/start":
+        {
+            if (isAdmin)
+            {
+                await botClient.SendMessage(chatId, "👑 Добро пожаловать, администратор!",
+                    replyMarkup: AdminKeyboard(), cancellationToken: ct);
                 break;
             }
 
-            case "📅 Расписание":
+            using var db = new SchoolContext();
+            var found = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+
+            if (found != null)
+                await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: MainKeyboard(), cancellationToken: ct);
+            else
             {
-                var kb = new ReplyKeyboardMarkup(new[]
+                await botClient.SendMessage(chatId,
+                    "👋 Добро пожаловать! Для начала зарегистрируйся.\n\nВведи своё имя:",
+                    replyMarkup: new ReplyKeyboardRemove(), cancellationToken: ct);
+                userStates[chatId] = "waitingName";
+            }
+            break;
+        }
+
+        // ── /admin ──────────────────────────────────────────────────────────
+        case "/admin":
+        {
+            if (isAdmin)
+                await botClient.SendMessage(chatId, "👑 Панель администратора:",
+                    replyMarkup: AdminKeyboard(), cancellationToken: ct);
+            else
+                await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+            break;
+        }
+
+        // ── /backup ─────────────────────────────────────────────────────────
+        case "/backup":
+        {
+            if (isAdmin)
+            {
+                await botClient.SendMessage(chatId, "⏳ Сохраняю БД...", cancellationToken: ct);
+                await backup.BackupAsync();
+                await botClient.SendMessage(chatId, "✅ БД сохранена в GitHub!", cancellationToken: ct);
+            }
+            else
+                await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
+            break;
+        }
+
+        // ── Объявление (кнопка админа) ───────────────────────────────────
+        case "📢 Объявление":
+        {
+            if (!isAdmin) goto default;
+            userStates[chatId] = "waitingAnnouncement";
+            await botClient.SendMessage(chatId,
+                "📝 Отправь объявление — текст, фото или фото с подписью.\nОно уйдёт всем зарегистрированным пользователям.",
+                replyMarkup: new ReplyKeyboardRemove(), cancellationToken: ct);
+            break;
+        }
+
+        // ── Расписание ───────────────────────────────────────────────────
+        case "📅 Расписание":
+        {
+            var kb = new ReplyKeyboardMarkup(new[]
+            {
+                new[] { new KeyboardButton("Сегодня"), new KeyboardButton("Завтра") },
+                new[] { new KeyboardButton("Неделя") },
+                new[] { new KeyboardButton("⬅️ Назад") }
+            })
+            { ResizeKeyboard = true };
+            await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: kb, cancellationToken: ct);
+            break;
+        }
+
+        case "Сегодня":
+        {
+            using var db = new SchoolContext();
+            var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+            if (user != null)
+            {
+                string today = NowKz().DayOfWeek.ToString();
+                var lessons = db.Schedules
+                    .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
+                    .OrderBy(s => s.LessonNumber).ToList();
+
+                if (lessons.Any())
                 {
-                    new[] { new KeyboardButton("Сегодня"), new KeyboardButton("Завтра") },
-                    new[] { new KeyboardButton("Неделя") },
-                    new[] { new KeyboardButton("⬅️ Назад") }
+                    var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
+                    foreach (var item in lessons)
+                        sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                    await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                }
+                else
+                    await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
+            }
+            else
+                await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
+            break;
+        }
+
+        case "Завтра":
+        {
+            using var db = new SchoolContext();
+            var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+            if (user != null)
+            {
+                string tomorrow = NowKz().AddDays(1).DayOfWeek.ToString();
+                var lessons = db.Schedules
+                    .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == tomorrow)
+                    .OrderBy(s => s.LessonNumber).ToList();
+
+                if (lessons.Any())
+                {
+                    var sb = new StringBuilder($"Расписание на завтра ({tomorrow}):\n");
+                    foreach (var item in lessons)
+                        sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                    await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                }
+                else
+                    await botClient.SendMessage(chatId, "У вас нет уроков завтра.", cancellationToken: ct);
+            }
+            else
+                await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
+            break;
+        }
+
+        case "Неделя":
+        {
+            using var db = new SchoolContext();
+            var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+            if (user != null)
+            {
+                var dayOrder = new Dictionary<string, int>
+                {
+                    ["Monday"] = 1, ["Tuesday"] = 2, ["Wednesday"] = 3,
+                    ["Thursday"] = 4, ["Friday"] = 5, ["Saturday"] = 6, ["Sunday"] = 7
+                };
+                var lessons = db.Schedules
+                    .Where(s => s.ClassName == user.ClassName).ToList()
+                    .OrderBy(s => dayOrder.TryGetValue(s.DayOfWeek, out var o) ? o : 99)
+                    .ThenBy(s => s.LessonNumber).ToList();
+
+                if (lessons.Any())
+                {
+                    var sb = new StringBuilder("Расписание на неделю:\n");
+                    string lastDay = "";
+                    foreach (var item in lessons)
+                    {
+                        if (item.DayOfWeek != lastDay)
+                        {
+                            sb.AppendLine($"\n📅 {item.DayOfWeek}:");
+                            lastDay = item.DayOfWeek;
+                        }
+                        sb.AppendLine($"  {item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+                    }
+                    await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                }
+                else
+                    await botClient.SendMessage(chatId, "Расписание не найдено.", cancellationToken: ct);
+            }
+            else
+                await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
+            break;
+        }
+
+        // ── Опросы ───────────────────────────────────────────────────────
+        case "📊 Опросы":
+            await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
+            break;
+
+        // ── Профиль ──────────────────────────────────────────────────────
+        case "👤 Профиль":
+        {
+            using var db = new SchoolContext();
+            var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
+            if (user != null)
+                await botClient.SendMessage(chatId,
+                    $"👤 Имя: {user.FirstName}\n🏫 Класс: {user.ClassName}\n🆔 ID: {chatId}",
+                    cancellationToken: ct);
+            else
+                await botClient.SendMessage(chatId, $"🆔 ID: {chatId}", cancellationToken: ct);
+            break;
+        }
+
+        // ── Назад ────────────────────────────────────────────────────────
+        case "⬅️ Назад":
+            await botClient.SendMessage(chatId, "Главное меню:",
+                replyMarkup: isAdmin ? AdminKeyboard() : MainKeyboard(), cancellationToken: ct);
+            break;
+
+        // ── Default: регистрация ─────────────────────────────────────────
+        default:
+        {
+            // Шаг 1: ждём имя
+            if (userStates.TryGetValue(chatId, out var state) && state == "waitingName")
+            {
+                userNames[chatId]  = text;
+                userStates[chatId] = "waitingClass";
+
+                var classKeyboard = new ReplyKeyboardMarkup(new[]
+                {
+                    new[] { new KeyboardButton("5-6 класс") },
+                    new[] { new KeyboardButton("7"),  new KeyboardButton("8") },
+                    new[] { new KeyboardButton("9"),  new KeyboardButton("10"), new KeyboardButton("11") }
                 })
                 { ResizeKeyboard = true };
-                await botClient.SendMessage(chatId, "Выбери вариант:", replyMarkup: kb, cancellationToken: ct);
-                break;
-            }
 
-            case "/admin":
-            {
-                if (chatId.ToString() == adminId)
-                    await botClient.SendMessage(chatId, "Добро пожаловать, администратор!", cancellationToken: ct);
-                else
-                    await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
-                break;
+                await botClient.SendMessage(chatId,
+                    $"Отлично, {text}! 👇 Теперь выбери свой класс:",
+                    replyMarkup: classKeyboard, cancellationToken: ct);
             }
-
-            case "/backup":
+            // Шаг 2: ждём класс
+            else if (userStates.TryGetValue(chatId, out state) && state == "waitingClass"
+                && new[] { "5-6 класс", "7", "8", "9", "10", "11" }.Contains(text))
             {
-                if (chatId.ToString() == adminId)
-                {
-                    await botClient.SendMessage(chatId, "⏳ Сохраняю БД...", cancellationToken: ct);
-                    await backup.BackupAsync();
-                    await botClient.SendMessage(chatId, "✅ БД сохранена в GitHub!", cancellationToken: ct);
-                }
-                else
-                    await botClient.SendMessage(chatId, "У вас нет прав", cancellationToken: ct);
-                break;
-            }
+                string name      = userNames[chatId];
+                string className = text; // "5-6 класс" — точно как в БД
 
-            case "Сегодня":
-            {
                 using var db = new SchoolContext();
-                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                if (user != null)
+                db.Users.Add(new User
                 {
-                    string today = NowKz().DayOfWeek.ToString();
-                    var lessons = db.Schedules
-                        .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
-                        .OrderBy(s => s.LessonNumber)
-                        .ToList();
+                    TelegramId = chatId,
+                    FirstName  = name,
+                    ClassName  = className,
+                    Role       = "student"
+                });
+                db.SaveChanges();
 
-                    if (lessons.Any())
-                    {
-                        var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
-                        foreach (var item in lessons)
-                            sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-                        await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
-                    }
-                    else
-                        await botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct);
-                }
-                else
-                    await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
-                break;
+                userStates.Remove(chatId);
+                userNames.Remove(chatId);
+
+                string displayClass = className == "5-6 класс" ? "5-6" : className;
+                await botClient.SendMessage(chatId,
+                    $"✅ Готово, {name}! Ты зарегистрирован в {displayClass} классе.",
+                    replyMarkup: MainKeyboard(), cancellationToken: ct);
             }
-
-            case "Завтра":
-            {
-                using var db = new SchoolContext();
-                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                if (user != null)
-                {
-                    string tomorrow = NowKz().AddDays(1).DayOfWeek.ToString();
-                    var lessons = db.Schedules
-                        .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == tomorrow)
-                        .OrderBy(s => s.LessonNumber)
-                        .ToList();
-
-                    if (lessons.Any())
-                    {
-                        var sb = new StringBuilder($"Расписание на завтра ({tomorrow}):\n");
-                        foreach (var item in lessons)
-                            sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-                        await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
-                    }
-                    else
-                        await botClient.SendMessage(chatId, "У вас нет уроков завтра.", cancellationToken: ct);
-                }
-                else
-                    await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
-                break;
-            }
-
-            case "Неделя":
-            {
-                using var db = new SchoolContext();
-                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                if (user != null)
-                {
-                    var dayOrder = new Dictionary<string, int>
-                    {
-                        ["Monday"]    = 1,
-                        ["Tuesday"]   = 2,
-                        ["Wednesday"] = 3,
-                        ["Thursday"]  = 4,
-                        ["Friday"]    = 5,
-                        ["Saturday"]  = 6,
-                        ["Sunday"]    = 7
-                    };
-
-                    var lessons = db.Schedules
-                        .Where(s => s.ClassName == user.ClassName)
-                        .ToList()
-                        .OrderBy(s => dayOrder.TryGetValue(s.DayOfWeek, out var o) ? o : 99)
-                        .ThenBy(s => s.LessonNumber)
-                        .ToList();
-
-                    if (lessons.Any())
-                    {
-                        var sb = new StringBuilder("Расписание на неделю:\n");
-                        string lastDay = "";
-                        foreach (var item in lessons)
-                        {
-                            if (item.DayOfWeek != lastDay)
-                            {
-                                sb.AppendLine($"\n📅 {item.DayOfWeek}:");
-                                lastDay = item.DayOfWeek;
-                            }
-                            sb.AppendLine($"  {item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-                        }
-                        await botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
-                    }
-                    else
-                        await botClient.SendMessage(chatId, "Расписание не найдено.", cancellationToken: ct);
-                }
-                else
-                    await botClient.SendMessage(chatId, "Вы не зарегистрированы!", cancellationToken: ct);
-                break;
-            }
-
-            case "📊 Опросы":
-                await botClient.SendMessage(chatId, "Здесь будут опросы", cancellationToken: ct);
-                break;
-
-            case "📢 Объявления":
-                await botClient.SendMessage(chatId, "Здесь будут объявления", cancellationToken: ct);
-                break;
-
-            case "👤 Профиль":
-            {
-                using var db = new SchoolContext();
-                var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
-                if (user != null)
-                    await botClient.SendMessage(chatId, $"👤 Имя: {user.FirstName}\n🏫 Класс: {user.ClassName}\n🆔 ID: {chatId}", cancellationToken: ct);
-                else
-                    await botClient.SendMessage(chatId, $"🆔 ID: {chatId}", cancellationToken: ct);
-                break;
-            }
-
-            case "⬅️ Назад":
-                await botClient.SendMessage(chatId, "Главное меню:", replyMarkup: MainKeyboard(), cancellationToken: ct);
-                break;
-
-            default:
-            {
-                if (userStates.TryGetValue(chatId, out var state) && state == "waitingName")
-                {
-                    userNames[chatId]  = text;
-                    userStates[chatId] = "waitingClass";
-
-                    var classKeyboard = new ReplyKeyboardMarkup(new[]
-                    {
-                        new[] { new KeyboardButton("5"),  new KeyboardButton("6"),  new KeyboardButton("7") },
-                        new[] { new KeyboardButton("8"),  new KeyboardButton("9") },
-                        new[] { new KeyboardButton("10"), new KeyboardButton("11") }
-                    })
-                    { ResizeKeyboard = true };
-
-                    await botClient.SendMessage(chatId, $"Отлично, {text}! 👇 Теперь выбери свой класс:", replyMarkup: classKeyboard, cancellationToken: ct);
-                }
-                else if (userStates.TryGetValue(chatId, out state)
-                        && state == "waitingClass"
-                        && new[] { "5", "6", "7", "8", "9", "10", "11" }.Contains(text))
-                {
-                    string name      = userNames[chatId];
-                    string className = text;
-
-                    using var db = new SchoolContext();
-                    db.Users.Add(new User
-                    {
-                        TelegramId = chatId,
-                        FirstName  = name,
-                        ClassName  = className,
-                        Role       = "student"
-                    });
-                    db.SaveChanges();
-
-                    userStates.Remove(chatId);
-                    userNames.Remove(chatId);
-
-                    await botClient.SendMessage(chatId, $"✅ Готово, {name}! Ты зарегистрирован в {className} классе.", replyMarkup: MainKeyboard(), cancellationToken: ct);
-                }
-                else
-                    await botClient.SendMessage(chatId, "Используйте кнопки, чтобы управлять ботом", cancellationToken: ct);
-                break;
-            }
+            else
+                await botClient.SendMessage(chatId,
+                    "Используйте кнопки, чтобы управлять ботом", cancellationToken: ct);
+            break;
         }
     }
 
@@ -411,29 +483,30 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
 // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
 // ══════════════════════════════════════════════
 
-// Казахстан (Астана/Алматы) — UTC+5
-// Работает на любом сервере независимо от его часового пояса
 static DateTime NowKz()
 {
     TimeZoneInfo tz;
-    try
-    {
-        // Linux / macOS (Docker на Render, Railway и т.д.)
-        tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Almaty");
-    }
-    catch
-    {
-        // Windows
-        tz = TimeZoneInfo.FindSystemTimeZoneById("Central Asia Standard Time");
-    }
+    try   { tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Almaty"); }
+    catch { tz = TimeZoneInfo.FindSystemTimeZoneById("Central Asia Standard Time"); }
     return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
 }
 
+// Главное меню для учеников (без кнопки Объявления)
 static ReplyKeyboardMarkup MainKeyboard() =>
     new(new[]
     {
-        new[] { new KeyboardButton("📅 Расписание"), new KeyboardButton("📢 Объявления") },
-        new[] { new KeyboardButton("📊 Опросы"),     new KeyboardButton("👤 Профиль") }
+        new[] { new KeyboardButton("📅 Расписание") },
+        new[] { new KeyboardButton("📊 Опросы"), new KeyboardButton("👤 Профиль") }
+    })
+    { ResizeKeyboard = true };
+
+// Меню администратора
+static ReplyKeyboardMarkup AdminKeyboard() =>
+    new(new[]
+    {
+        new[] { new KeyboardButton("📢 Объявление") },
+        new[] { new KeyboardButton("📅 Расписание") },
+        new[] { new KeyboardButton("👤 Профиль") }
     })
     { ResizeKeyboard = true };
 

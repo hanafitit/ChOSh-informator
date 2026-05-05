@@ -8,19 +8,12 @@ using Telegram.Bot;
 internal class Alarm
 {
     private readonly ITelegramBotClient _bot;
-    private readonly int _minutesBefore;
 
-    public Alarm(ITelegramBotClient bot, int minutesBefore = 5)
+    public Alarm(ITelegramBotClient bot)
     {
         _bot = bot;
-        _minutesBefore = minutesBefore;
     }
 
-    /// <summary>
-    /// Запускает фоновый цикл уведомлений.
-    /// Каждую минуту проверяет, есть ли урок, начинающийся ровно через _minutesBefore минут,
-    /// и рассылает уведомления всем ученикам соответствующего класса.
-    /// </summary>
     // Казахстан (Астана/Алматы) — UTC+5
     // Работает на любом сервере независимо от его часового пояса
     private static DateTime NowKz()
@@ -41,7 +34,7 @@ internal class Alarm
 
     public Task RunAsync(CancellationToken ct) => Task.Run(async () =>
     {
-        Console.WriteLine($"[Alarm] Запущен. Уведомления за {_minutesBefore} мин до урока.");
+        Console.WriteLine("[Alarm] Запущен. Уведомления перед длинными переменами.");
 
         while (!ct.IsCancellationRequested)
         {
@@ -72,45 +65,65 @@ internal class Alarm
     private async Task CheckAndNotifyAsync(CancellationToken ct)
     {
         var now = NowKz();
-        string today = now.DayOfWeek.ToString();  // "Monday", "Tuesday" и т.д.
-
-        // Время, которое будет через _minutesBefore минут, в формате "HH:mm"
-        string targetTime = now.AddMinutes(_minutesBefore).ToString("HH:mm");
+        string today = now.DayOfWeek.ToString();
+        string currentTime = now.ToString("HH:mm");
 
         using var db = new SchoolContext();
 
-        // Находим все уроки, начинающиеся ровно через N минут
-        var upcomingLessons = db.Schedules
-            .Where(s => s.DayOfWeek == today && s.StartTime == targetTime)
-            .ToList();
+        // Берём всё расписание на сегодня, сгруппированное по классу
+        var todayLessons = db.Schedules
+            .Where(s => s.DayOfWeek == today)
+            .ToList()
+            .GroupBy(s => s.ClassName);
 
-        if (!upcomingLessons.Any()) return;
-
-        Console.WriteLine($"[Alarm] Найдено {upcomingLessons.Count} урок(а) в {targetTime}");
-
-        // Группируем по классу и уведомляем всех учеников
-        var byClass = upcomingLessons.GroupBy(l => l.ClassName);
-
-        foreach (var group in byClass)
+        foreach (var classGroup in todayLessons)
         {
-            var lesson = group.First();
-            var students = db.Users
-                .Where(u => u.ClassName == group.Key)
-                .ToList();
+            var lessons = classGroup.OrderBy(s => s.LessonNumber).ToList();
 
-            string msg = $"🔔 Через {_minutesBefore} мин начнётся урок!\n" +
-                         $"📚 {lesson.Subject}\n" +
-                         $"⏰ {lesson.StartTime} — {lesson.EndTime}";
-
-            foreach (var student in students)
+            for (int i = 0; i < lessons.Count; i++)
             {
-                try
+                var lesson = lessons[i];
+
+                // Вычисляем длину перемены перед этим уроком
+                int breakMinutes = 0;
+                if (i > 0)
                 {
-                    await _bot.SendMessage(student.TelegramId, msg, cancellationToken: ct);
+                    var prevLesson = lessons[i - 1];
+                    var prevEnd   = TimeSpan.Parse(prevLesson.EndTime);
+                    var thisStart = TimeSpan.Parse(lesson.StartTime);
+                    breakMinutes = (int)(thisStart - prevEnd).TotalMinutes;
                 }
-                catch (Exception ex)
+
+                // Перемена 5 минут или меньше — пропускаем
+                if (breakMinutes <= 5) continue;
+
+                // Уведомляем за 3 минуты до начала урока
+                string notifyAt = TimeSpan.Parse(lesson.StartTime)
+                    .Subtract(TimeSpan.FromMinutes(3))
+                    .ToString(@"hh\:mm");
+
+                if (currentTime != notifyAt) continue;
+
+                Console.WriteLine($"[Alarm] Перемена {breakMinutes} мин перед {lesson.Subject} ({lesson.StartTime}), класс {classGroup.Key}");
+
+                var students = db.Users
+                    .Where(u => u.ClassName == classGroup.Key)
+                    .ToList();
+
+                string msg = $"🔔 Через 3 мин звонок!\n" +
+                             $"📚 {lesson.Subject}\n" +
+                             $"⏰ {lesson.StartTime} — {lesson.EndTime}";
+
+                foreach (var student in students)
                 {
-                    Console.WriteLine($"[Alarm] Не удалось отправить {student.TelegramId}: {ex.Message}");
+                    try
+                    {
+                        await _bot.SendMessage(student.TelegramId, msg, cancellationToken: ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Alarm] Не удалось отправить {student.TelegramId}: {ex.Message}");
+                    }
                 }
             }
         }
