@@ -239,7 +239,7 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                 var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
                 if (user != null)
                 {
-                    string today = DateTime.Now.DayOfWeek.ToString();
+                    string today = NowKz().DayOfWeek.ToString();
                     var lessons = db.Schedules
                         .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today)
                         .OrderBy(s => s.LessonNumber)
@@ -266,7 +266,7 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
                 var user = db.Users.FirstOrDefault(u => u.TelegramId == chatId);
                 if (user != null)
                 {
-                    string tomorrow = DateTime.Now.AddDays(1).DayOfWeek.ToString();
+                    string tomorrow = NowKz().AddDays(1).DayOfWeek.ToString();
                     var lessons = db.Schedules
                         .Where(s => s.ClassName == user.ClassName && s.DayOfWeek == tomorrow)
                         .OrderBy(s => s.LessonNumber)
@@ -410,6 +410,25 @@ async Task HandleUpdate(ITelegramBotClient botClient, GitHubBackup backup, Updat
 // ══════════════════════════════════════════════
 // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
 // ══════════════════════════════════════════════
+
+// Казахстан (Астана/Алматы) — UTC+5
+// Работает на любом сервере независимо от его часового пояса
+static DateTime NowKz()
+{
+    TimeZoneInfo tz;
+    try
+    {
+        // Linux / macOS (Docker на Render, Railway и т.д.)
+        tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Almaty");
+    }
+    catch
+    {
+        // Windows
+        tz = TimeZoneInfo.FindSystemTimeZoneById("Central Asia Standard Time");
+    }
+    return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
+}
+
 static ReplyKeyboardMarkup MainKeyboard() =>
     new(new[]
     {
