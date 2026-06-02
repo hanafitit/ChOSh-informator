@@ -4,32 +4,18 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot;
+using ЧОШ_информатор.Data;
+using ЧОШ_информатор.Helpers;
 
-internal class Alarm
+namespace ЧОШ_информатор.Services;
+
+public class AlarmService
 {
     private readonly ITelegramBotClient _bot;
 
-    public Alarm(ITelegramBotClient bot)
+    public AlarmService(ITelegramBotClient bot)
     {
         _bot = bot;
-    }
-
-    // Казахстан (Астана/Алматы) — UTC+5
-    // Работает на любом сервере независимо от его часового пояса
-    private static DateTime NowKz()
-    {
-        TimeZoneInfo tz;
-        try
-        {
-            // Linux / macOS (Docker на Render, Railway и т.д.)
-            tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Almaty");
-        }
-        catch
-        {
-            // Windows
-            tz = TimeZoneInfo.FindSystemTimeZoneById("Central Asia Standard Time");
-        }
-        return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
     }
 
     public Task RunAsync(CancellationToken ct) => Task.Run(async () =>
@@ -52,9 +38,9 @@ internal class Alarm
             }
 
             // Ждём до начала следующей минуты
-            var now = NowKz();
+            var now = TimeHelper.NowKz();
             var nextMinute = now.AddSeconds(60 - now.Second).AddMilliseconds(-now.Millisecond);
-            var delay = nextMinute - NowKz();
+            var delay = nextMinute - TimeHelper.NowKz();
             if (delay > TimeSpan.Zero)
                 await Task.Delay(delay, ct);
         }
@@ -64,7 +50,7 @@ internal class Alarm
 
     private async Task CheckAndNotifyAsync(CancellationToken ct)
     {
-        var now = NowKz();
+        var now = TimeHelper.NowKz();
         string today = now.DayOfWeek.ToString();
         string currentTime = now.ToString("HH:mm");
 
@@ -89,7 +75,7 @@ internal class Alarm
                 if (i > 0)
                 {
                     var prevLesson = lessons[i - 1];
-                    var prevEnd   = TimeSpan.Parse(prevLesson.EndTime);
+                    var prevEnd = TimeSpan.Parse(prevLesson.EndTime);
                     var thisStart = TimeSpan.Parse(lesson.StartTime);
                     breakMinutes = (int)(thisStart - prevEnd).TotalMinutes;
                 }
