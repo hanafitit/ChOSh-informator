@@ -10,6 +10,7 @@ public class SchoolContext : DbContext
     public DbSet<Teacher> Teachers { get; set; } = null!;
     public DbSet<TeacherSubject> TeacherSubjects { get; set; } = null!;
     public DbSet<TeacherAttendance> TeacherAttendance { get; set; } = null!;
+    public DbSet<DailySchedule> DailySchedules { get; set; } = null!;
     public DbSet<Poll> Polls { get; set; } = null!;
     public DbSet<PollOption> PollOptions { get; set; } = null!;
     public DbSet<PollVote> PollVotes { get; set; } = null!;
@@ -24,6 +25,7 @@ public class SchoolContext : DbContext
         m.Entity<Teacher>().ToTable("Teachers");
         m.Entity<TeacherSubject>().ToTable("TeacherSubjects");
         m.Entity<TeacherAttendance>().ToTable("TeacherAttendance");
+        m.Entity<DailySchedule>().ToTable("DailySchedules");
         m.Entity<Poll>().ToTable("Polls");
         m.Entity<PollOption>().ToTable("PollOptions");
         m.Entity<PollVote>().ToTable("PollVotes");

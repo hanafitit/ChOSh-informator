@@ -25,6 +25,7 @@ public class BotHandler
     private readonly ILogger<BotHandler> _logger;
     private readonly string _adminId;
     private readonly ConcurrentDictionary<long, UserSession> _userSessions = new();
+    private static readonly object _dailyLock = new();
 
     public BotHandler(ITelegramBotClient botClient, GitHubBackupService backupService, ILogger<BotHandler> logger)
     {
@@ -155,6 +156,11 @@ public class BotHandler
                 await HandleCheckScheduleAsync(chatId, db, ct);
                 break;
 
+            case "✏️ Редактировать":
+                if (!isAdmin) break;
+                await HandleEditScheduleStartAsync(chatId, db, ct);
+                break;
+
             case "✅ Подтвердить и разослать":
                 if (!isAdmin) break;
                 await HandleConfirmAndSendAsync(chatId, db, ct);
@@ -277,6 +283,118 @@ public class BotHandler
 
         if (isAdmin)
         {
+            if (session.State == "edit_sched_select_class")
+            {
+                if (text == null) return true;
+                if (text == "⬅️ Назад")
+                {
+                    session.Reset();
+                    await HandleCheckScheduleAsync(chatId, db, ct);
+                    return true;
+                }
+                session.TempData["edit_class"] = text;
+                session.State = "edit_sched_select_lesson";
+                await HandleEditScheduleSelectLessonAsync(chatId, text, db, ct);
+                return true;
+            }
+            if (session.State == "edit_sched_select_lesson")
+            {
+                if (text == null) return true;
+                if (text == "⬅️ Назад")
+                {
+                    session.State = "edit_sched_select_class";
+                    await HandleEditScheduleStartAsync(chatId, db, ct);
+                    return true;
+                }
+                var parts = text.Split(':');
+                if (parts.Length > 0 && int.TryParse(parts[0].Trim(), out _))
+                {
+                    session.TempData["edit_lesson_id"] = parts[0].Trim();
+                    session.State = "edit_sched_select_action";
+                    var actionKb = new ReplyKeyboardMarkup(new[]
+                    {
+                        new[] { new KeyboardButton("❌ Удалить"), new KeyboardButton("🔃 Поменять местами") },
+                        new[] { new KeyboardButton("⬅️ Назад") }
+                    }) { ResizeKeyboard = true };
+                    await _botClient.SendMessage(chatId, "Что сделать с этим уроком?", replyMarkup: actionKb, cancellationToken: ct);
+                }
+                else
+                {
+                    await _botClient.SendMessage(chatId, "Пожалуйста, выберите урок из списка.", cancellationToken: ct);
+                }
+                return true;
+            }
+            if (session.State == "edit_sched_select_action")
+            {
+                if (text == "❌ Удалить")
+                {
+                    int id = int.Parse(session.TempData["edit_lesson_id"]);
+                    var lesson = db.DailySchedules.FirstOrDefault(d => d.Id == id);
+                    if (lesson != null)
+                    {
+                        string className = lesson.ClassName;
+                        db.DailySchedules.Remove(lesson);
+                        // Shift subsequent lessons
+                        var subsequent = db.DailySchedules.Where(d => d.Date == lesson.Date && d.ClassName == className && d.LessonNumber > lesson.LessonNumber).ToList();
+                        foreach (var s in subsequent) s.LessonNumber--;
+                        db.SaveChanges();
+                        await _botClient.SendMessage(chatId, "✅ Урок удалён.", cancellationToken: ct);
+                    }
+                    session.Reset();
+                    await HandleCheckScheduleAsync(chatId, db, ct);
+                    return true;
+                }
+                if (text == "🔃 Поменять местами")
+                {
+                    session.State = "edit_sched_swap_target";
+                    await HandleEditScheduleSelectLessonAsync(chatId, session.TempData["edit_class"], db, ct, "Выбери второй урок для обмена:");
+                    return true;
+                }
+                if (text == "⬅️ Назад")
+                {
+                    session.State = "edit_sched_select_class";
+                    await HandleEditScheduleStartAsync(chatId, db, ct);
+                    return true;
+                }
+            }
+            if (session.State == "edit_sched_swap_target")
+            {
+                if (text == null) return true;
+                if (text == "⬅️ Назад")
+                {
+                    session.State = "edit_sched_select_lesson";
+                    await HandleEditScheduleSelectLessonAsync(chatId, session.TempData["edit_class"], db, ct);
+                    return true;
+                }
+                var parts = text.Split(':');
+                if (parts.Length > 0 && int.TryParse(parts[0].Trim(), out int id2) && int.TryParse(session.TempData["edit_lesson_id"], out int id1))
+                {
+                    var l1 = db.DailySchedules.FirstOrDefault(d => d.Id == id1);
+                    var l2 = db.DailySchedules.FirstOrDefault(d => d.Id == id2);
+
+                    if (l1 != null && l2 != null)
+                    {
+                        string tempSubj = l1.Subject;
+                        string tempTeach = l1.TeacherName;
+                        l1.Subject = l2.Subject;
+                        l1.TeacherName = l2.TeacherName;
+                        l1.IsModified = true;
+                        l2.Subject = tempSubj;
+                        l2.TeacherName = tempTeach;
+                        l2.IsModified = true;
+                        db.SaveChanges();
+                        await _botClient.SendMessage(chatId, "✅ Уроки поменяны местами.", cancellationToken: ct);
+                    }
+                    session.Reset();
+                    await HandleCheckScheduleAsync(chatId, db, ct);
+                }
+                else
+                {
+                    await _botClient.SendMessage(chatId, "Пожалуйста, выберите урок из списка.", cancellationToken: ct);
+                }
+                return true;
+            }
+
             if (session.State == "poll_create_question")
             {
                 if (text == null) return true;
@@ -569,64 +687,122 @@ public class BotHandler
         await _botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
     }
 
+    private async Task HandleEditScheduleStartAsync(long chatId, SchoolContext db, CancellationToken ct)
+    {
+        string dateStr = TimeHelper.NowKz().ToString("yyyy-MM-dd");
+        var classes = db.DailySchedules.Where(d => d.Date == dateStr).Select(d => d.ClassName).Distinct().ToList();
+        if (!classes.Any())
+        {
+            await _botClient.SendMessage(chatId, "Расписание на сегодня ещё не сформировано. Сначала нажмите «Проверить расписание».", cancellationToken: ct);
+            return;
+        }
+
+        var sortedClasses = classes.SortClasses().ToList();
+        var buttons = sortedClasses.Select(c => new KeyboardButton(c)).ToList();
+        var rows = new List<KeyboardButton[]>();
+        for (int i = 0; i < buttons.Count; i += 2)
+        {
+            rows.Add(buttons.Skip(i).Take(2).ToArray());
+        }
+        rows.Add(new[] { new KeyboardButton("⬅️ Назад") });
+
+        _userSessions[chatId].State = "edit_sched_select_class";
+        await _botClient.SendMessage(chatId, "Выбери класс для редактирования:", replyMarkup: new ReplyKeyboardMarkup(rows) { ResizeKeyboard = true }, cancellationToken: ct);
+    }
+
+    private async Task HandleEditScheduleSelectLessonAsync(long chatId, string className, SchoolContext db, CancellationToken ct, string title = "Выбери урок:")
+    {
+        string dateStr = TimeHelper.NowKz().ToString("yyyy-MM-dd");
+        var lessons = db.DailySchedules.Where(d => d.Date == dateStr && d.ClassName == className).OrderBy(d => d.LessonNumber).ToList();
+
+        var buttons = lessons.Select(l => new KeyboardButton($"{l.Id}: {l.LessonNumber} - {l.Subject}")).ToList();
+        var rows = buttons.Select(b => new[] { b }).ToList();
+        rows.Add(new[] { new KeyboardButton("⬅️ Назад") });
+
+        await _botClient.SendMessage(chatId, title, replyMarkup: new ReplyKeyboardMarkup(rows) { ResizeKeyboard = true }, cancellationToken: ct);
+    }
+
     private async Task HandleCheckScheduleAsync(long chatId, SchoolContext db, CancellationToken ct)
     {
         string today = TimeHelper.NowKz().DayOfWeek.ToString();
         string dateStr = TimeHelper.NowKz().ToString("yyyy-MM-dd");
 
-        var absentNames = db.TeacherAttendance
+        List<DailySchedule> daily;
+        lock (_dailyLock)
+        {
+            daily = db.DailySchedules.Where(d => d.Date == dateStr).ToList();
+            if (!daily.Any())
+            {
+            var absentNames = db.TeacherAttendance
+                .Where(a => a.Date == dateStr && !a.IsPresent)
+                .Select(a => a.TeacherName).ToList();
+
+            var baseSchedule = db.Schedules.Where(s => s.DayOfWeek == today).ToList();
+            var timeSlots = baseSchedule
+                .GroupBy(s => s.LessonNumber)
+                .Select(g => g.First())
+                .OrderBy(s => s.LessonNumber)
+                .ToList();
+
+            var classes = baseSchedule.Select(s => s.ClassName).Distinct().ToList();
+            foreach (var cls in classes)
+            {
+                var lessons = baseSchedule.Where(s => s.ClassName == cls).OrderBy(s => s.LessonNumber).ToList();
+                var remaining = lessons.Where(l => string.IsNullOrEmpty(l.TeacherName) || !absentNames.Contains(l.TeacherName)).ToList();
+
+                for (int i = 0; i < remaining.Count; i++)
+                {
+                    var slot = timeSlots.ElementAtOrDefault(i);
+                    db.DailySchedules.Add(new DailySchedule
+                    {
+                        Date = dateStr,
+                        ClassName = cls,
+                        LessonNumber = i + 1,
+                        Subject = remaining[i].Subject,
+                        StartTime = slot?.StartTime ?? remaining[i].StartTime,
+                        EndTime = slot?.EndTime ?? remaining[i].EndTime,
+                        TeacherName = remaining[i].TeacherName,
+                        IsModified = false
+                    });
+                }
+            }
+                db.SaveChanges();
+                daily = db.DailySchedules.Where(d => d.Date == dateStr).ToList();
+            }
+        }
+
+        var absentTeachers = db.TeacherAttendance
             .Where(a => a.Date == dateStr && !a.IsPresent)
             .Select(a => a.TeacherName).ToList();
 
-        var timeSlots = db.Schedules
-            .Where(s => s.DayOfWeek == today)
-            .ToList()
-            .GroupBy(s => s.LessonNumber)
-            .Select(g => g.First())
-            .OrderBy(s => s.LessonNumber)
-            .ToList();
-
-        var allClasses = db.Schedules
-            .Where(s => s.DayOfWeek == today && s.ClassName != "")
-            .Select(s => s.ClassName).Distinct().ToList();
-
-        var sb = new StringBuilder($"📅 Расписание на сегодня ({today}):\n");
-        if (absentNames.Any())
-            sb.AppendLine($"❌ Отсутствуют: {string.Join(", ", absentNames)}\n");
+        var sb = new StringBuilder($"📅 Расписание на сегодня ({today}, {dateStr}):\n");
+        if (absentTeachers.Any())
+            sb.AppendLine($"❌ Отсутствуют: {string.Join(", ", absentTeachers)}\n");
         else
             sb.AppendLine("✅ Все учителя присутствуют\n");
 
-        foreach (var cls in allClasses.OrderBy(c => c))
+        var allClasses = daily.Select(d => d.ClassName).Distinct().SortClasses().ToList();
+
+        foreach (var cls in allClasses)
         {
-            var lessons = db.Schedules
-                .Where(s => s.ClassName == cls && s.DayOfWeek == today)
-                .OrderBy(s => s.LessonNumber).ToList();
-
-            var remaining = lessons.Where(l =>
-                string.IsNullOrEmpty(l.TeacherName) || !absentNames.Contains(l.TeacherName)
-            ).ToList();
-
-            if (!remaining.Any()) continue;
+            var lessons = daily.Where(d => d.ClassName == cls).OrderBy(d => d.LessonNumber).ToList();
+            if (!lessons.Any()) continue;
 
             sb.AppendLine($"🏫 {cls}:");
-            for (int i = 0; i < remaining.Count; i++)
+            foreach (var l in lessons)
             {
-                var slot = timeSlots.ElementAtOrDefault(i);
-                string start = slot?.StartTime ?? remaining[i].StartTime;
-                string end = slot?.EndTime ?? remaining[i].EndTime;
-                sb.AppendLine($"  {i + 1}: {remaining[i].Subject} ({start} - {end})");
+                string combinedInfo = "";
+                var combinedWith = daily.Where(d => d.Date == dateStr && d.ClassName != cls && d.StartTime == l.StartTime && !string.IsNullOrEmpty(d.TeacherName) && d.TeacherName == l.TeacherName).Select(d => d.ClassName).ToList();
+                if (combinedWith.Any())
+                {
+                    combinedInfo = $" (совм. с {string.Join(", ", combinedWith)})";
+                }
+                sb.AppendLine($"  {l.LessonNumber}: {l.Subject} ({l.StartTime} - {l.EndTime}){combinedInfo}");
             }
             sb.AppendLine();
         }
 
-        var confirmKb = new ReplyKeyboardMarkup(new[]
-        {
-            new[] { new KeyboardButton("✅ Подтвердить и разослать") },
-            new[] { new KeyboardButton("⬅️ Назад") }
-        })
-        { ResizeKeyboard = true };
-
-        await _botClient.SendMessage(chatId, sb.ToString(), replyMarkup: confirmKb, cancellationToken: ct);
+        await _botClient.SendMessage(chatId, sb.ToString(), replyMarkup: KeyboardHelper.ScheduleCheckKeyboard(), cancellationToken: ct);
     }
 
     private async Task HandleConfirmAndSendAsync(long chatId, SchoolContext db, CancellationToken ct)
@@ -634,17 +810,12 @@ public class BotHandler
         string today = TimeHelper.NowKz().DayOfWeek.ToString();
         string dateStr = TimeHelper.NowKz().ToString("yyyy-MM-dd");
 
-        var absentNames = db.TeacherAttendance
-            .Where(a => a.Date == dateStr && !a.IsPresent)
-            .Select(a => a.TeacherName).ToList();
-
-        var timeSlots = db.Schedules
-            .Where(s => s.DayOfWeek == today)
-            .ToList()
-            .GroupBy(s => s.LessonNumber)
-            .Select(g => g.First())
-            .OrderBy(s => s.LessonNumber)
-            .ToList();
+        var daily = db.DailySchedules.Where(d => d.Date == dateStr).ToList();
+        if (!daily.Any())
+        {
+            await _botClient.SendMessage(chatId, "Сначала нажмите «Проверить расписание», чтобы сформировать его.", cancellationToken: ct);
+            return;
+        }
 
         var students = db.Users.ToList();
         int sent = 0, failed = 0;
@@ -653,23 +824,20 @@ public class BotHandler
         {
             try
             {
-                var lessons = db.Schedules
-                    .Where(s => s.ClassName == student.ClassName && s.DayOfWeek == today)
-                    .OrderBy(s => s.LessonNumber).ToList();
+                var lessons = daily.Where(d => d.ClassName == student.ClassName).OrderBy(d => d.LessonNumber).ToList();
+                if (!lessons.Any()) continue;
 
-                var remaining = lessons.Where(l =>
-                    string.IsNullOrEmpty(l.TeacherName) || !absentNames.Contains(l.TeacherName)
-                ).ToList();
-
-                if (!remaining.Any()) continue;
-
-                var sb = new StringBuilder($"📅 Новое расписание на сегодня ({today}):\n\n");
-                for (int i = 0; i < remaining.Count; i++)
+                var sb = new StringBuilder($"📅 Новое расписание на сегодня ({today}, {dateStr}):\n\n");
+                foreach (var l in lessons)
                 {
-                    var slot = timeSlots.ElementAtOrDefault(i);
-                    string start = slot?.StartTime ?? remaining[i].StartTime;
-                    string end = slot?.EndTime ?? remaining[i].EndTime;
-                    sb.AppendLine($"{i + 1}: {remaining[i].Subject} ({start} - {end})");
+                    string combinedInfo = "";
+                    var combinedWith = daily.Where(d => d.Date == dateStr && d.ClassName != student.ClassName && d.StartTime == l.StartTime && !string.IsNullOrEmpty(d.TeacherName) && d.TeacherName == l.TeacherName).Select(d => d.ClassName).ToList();
+                    if (combinedWith.Any())
+                    {
+                        combinedInfo = $" (совм. с {string.Join(", ", combinedWith)})";
+                    }
+                    string mod = l.IsModified ? " ✏️" : "";
+                    sb.AppendLine($"{l.LessonNumber}: {l.Subject} ({l.StartTime} - {l.EndTime}){combinedInfo}{mod}");
                 }
 
                 await _botClient.SendMessage(student.TelegramId, sb.ToString(), cancellationToken: ct);
@@ -733,11 +901,29 @@ public class BotHandler
         if (type == "Сегодня")
         {
             string today = TimeHelper.NowKz().DayOfWeek.ToString();
+            string dateStr = TimeHelper.NowKz().ToString("yyyy-MM-dd");
+            var daily = db.DailySchedules.Where(d => d.Date == dateStr && d.ClassName == user.ClassName).OrderBy(d => d.LessonNumber).ToList();
+
+            if (daily.Any())
+            {
+                var sb = new StringBuilder($"Расписание на сегодня ({today}, {dateStr}):\n");
+                foreach (var l in daily)
+                {
+                    string combinedInfo = "";
+                    var combinedWith = db.DailySchedules.Where(d => d.Date == dateStr && d.ClassName != user.ClassName && d.StartTime == l.StartTime && !string.IsNullOrEmpty(d.TeacherName) && d.TeacherName == l.TeacherName).Select(d => d.ClassName).ToList();
+                    if (combinedWith.Any()) combinedInfo = $" (совм. с {string.Join(", ", combinedWith)})";
+                    string mod = l.IsModified ? " ✏️" : "";
+                    sb.AppendLine($"{l.LessonNumber}: {l.Subject} ({l.StartTime} - {l.EndTime}){combinedInfo}{mod}");
+                }
+                await _botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+                return;
+            }
+
             var lessons = db.Schedules.Where(s => s.ClassName == user.ClassName && s.DayOfWeek == today).OrderBy(s => s.LessonNumber).ToList();
             if (!lessons.Any()) { await _botClient.SendMessage(chatId, "У вас нет уроков на сегодня.", cancellationToken: ct); return; }
-            var sb = new StringBuilder($"Расписание на сегодня ({today}):\n");
-            foreach (var item in lessons) sb.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
-            await _botClient.SendMessage(chatId, sb.ToString(), cancellationToken: ct);
+            var sbStatic = new StringBuilder($"Расписание на сегодня ({today}):\n");
+            foreach (var item in lessons) sbStatic.AppendLine($"{item.LessonNumber}: {item.Subject} ({item.StartTime} - {item.EndTime})");
+            await _botClient.SendMessage(chatId, sbStatic.ToString(), cancellationToken: ct);
         }
         else if (type == "Завтра")
         {
