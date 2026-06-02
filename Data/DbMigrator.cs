@@ -19,10 +19,21 @@ public static class DbMigrator
         }
         catch { /* уже есть */ }
 
+        // Username в Teachers
+        try
+        {
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE Teachers ADD COLUMN Username TEXT NOT NULL DEFAULT ''";
+            cmd.ExecuteNonQuery();
+            Console.WriteLine("[Migration] Добавлена колонка Username в Teachers");
+        }
+        catch { /* уже есть */ }
+
         // Таблица Teachers
         ExecuteNonQuery(conn, @"CREATE TABLE IF NOT EXISTS Teachers (
             Id INTEGER PRIMARY KEY AUTOINCREMENT,
             TelegramId INTEGER NOT NULL,
+            Username TEXT NOT NULL DEFAULT '',
             Name TEXT NOT NULL DEFAULT '',
             IsHomeroom INTEGER NOT NULL DEFAULT 0,
             HomeroomClass TEXT NOT NULL DEFAULT ''

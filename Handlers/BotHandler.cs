@@ -45,9 +45,20 @@ public class BotHandler
 
         string? text = msg?.Text ?? msg?.Caption;
         string? photoId = msg?.Photo?.LastOrDefault()?.FileId;
+        string? username = msg?.From?.Username ?? update.CallbackQuery?.From?.Username;
 
         using var db = new SchoolContext();
         var teacher = db.Teachers.FirstOrDefault(t => t.TelegramId == chatId);
+        if (teacher == null && !string.IsNullOrEmpty(username))
+        {
+            teacher = db.Teachers.FirstOrDefault(t => t.Username.ToLower() == username.ToLower() || t.Username.ToLower() == "@" + username.ToLower());
+            if (teacher != null && teacher.TelegramId == 0)
+            {
+                teacher.TelegramId = chatId;
+                db.SaveChanges();
+                _logger.LogInformation("Updated TelegramId for teacher {TeacherName} using username @{Username}", teacher.Name, username);
+            }
+        }
         bool isTeacher = teacher != null;
 
         var session = _userSessions.GetOrAdd(chatId, _ => new UserSession());
@@ -346,12 +357,23 @@ public class BotHandler
             }
             if (session.State == "teacher_add_id")
             {
-                if (text == null || !long.TryParse(text.Trim(), out _))
+                if (text == null) return true;
+                string input = text.Trim();
+                if (long.TryParse(input, out _))
                 {
-                    await _botClient.SendMessage(chatId, "Неверный формат. Введи числовой Telegram ID:", cancellationToken: ct);
+                    session.TempData["telegramId"] = input;
+                    session.TempData["username"] = "";
+                }
+                else if (input.StartsWith("@") && input.Length > 1)
+                {
+                    session.TempData["telegramId"] = "0";
+                    session.TempData["username"] = input;
+                }
+                else
+                {
+                    await _botClient.SendMessage(chatId, "Неверный формат. Введи числовой Telegram ID или @username:", cancellationToken: ct);
                     return true;
                 }
-                session.TempData["telegramId"] = text.Trim();
                 session.State = "teacher_add_homeroom";
 
                 var classesKb = new ReplyKeyboardMarkup(new[]
@@ -383,21 +405,37 @@ public class BotHandler
             {
                 if (text == null) return true;
                 long tid = long.Parse(session.TempData["telegramId"]);
+                string tusername = session.TempData["username"];
                 string tname = session.TempData["name"];
                 string homeroom = session.TempData["homeroom"];
 
-                var existing = db.Teachers.FirstOrDefault(t => t.TelegramId == tid);
-                if (existing != null)
+                if (tid != 0)
                 {
-                    await _botClient.SendMessage(chatId, "⚠️ Учитель с таким ID уже существует.",
-                        replyMarkup: KeyboardHelper.AdminKeyboard(), cancellationToken: ct);
-                    session.Reset();
-                    return true;
+                    var existing = db.Teachers.FirstOrDefault(t => t.TelegramId == tid);
+                    if (existing != null)
+                    {
+                        await _botClient.SendMessage(chatId, "⚠️ Учитель с таким ID уже существует.",
+                            replyMarkup: KeyboardHelper.AdminKeyboard(), cancellationToken: ct);
+                        session.Reset();
+                        return true;
+                    }
+                }
+                else if (!string.IsNullOrEmpty(tusername))
+                {
+                    var existing = db.Teachers.FirstOrDefault(t => t.Username.ToLower() == tusername.ToLower());
+                    if (existing != null)
+                    {
+                        await _botClient.SendMessage(chatId, "⚠️ Учитель с таким Username уже существует.",
+                            replyMarkup: KeyboardHelper.AdminKeyboard(), cancellationToken: ct);
+                        session.Reset();
+                        return true;
+                    }
                 }
 
                 db.Teachers.Add(new Teacher
                 {
                     TelegramId = tid,
+                    Username = tusername,
                     Name = tname,
                     IsHomeroom = !string.IsNullOrEmpty(homeroom),
                     HomeroomClass = homeroom
@@ -424,7 +462,7 @@ public class BotHandler
                 session.Reset();
 
                 await _botClient.SendMessage(chatId,
-                    $"✅ Учитель <b>{tname}</b> добавлен!\n📚 Предметов: {added}\n🏫 Класс рук.: {(string.IsNullOrEmpty(homeroom) ? "нет" : homeroom)}",
+                $"✅ Учитель <b>{tname}</b> добавлен!\n👤 ID/User: {(tid != 0 ? tid.ToString() : tusername)}\n📚 Предметов: {added}\n🏫 Класс рук.: {(string.IsNullOrEmpty(homeroom) ? "нет" : homeroom)}",
                     parseMode: ParseMode.Html, replyMarkup: KeyboardHelper.AdminKeyboard(), cancellationToken: ct);
                 return true;
             }
@@ -522,7 +560,7 @@ public class BotHandler
         var sb = new StringBuilder("👨‍🏫 Учителя:\n\n");
         foreach (var t in teachers)
         {
-            sb.AppendLine($"• {t.Name} (ID: {t.TelegramId})");
+            sb.AppendLine($"• {t.Name} ({(t.TelegramId != 0 ? $"ID: {t.TelegramId}" : $"User: {t.Username}")})");
             if (t.IsHomeroom) sb.AppendLine($"  🏫 Классный рук.: {t.HomeroomClass}");
             foreach (var s in db.TeacherSubjects.Where(s => s.TeacherName == t.Name).ToList())
                 sb.AppendLine($"  📚 {s.Subject} — {s.ClassName}");
@@ -732,7 +770,7 @@ public class BotHandler
         if (user != null)
             await _botClient.SendMessage(chatId, $"👤 Имя: {user.FirstName}\n🏫 Класс: {user.ClassName}\n🆔 ID: {chatId}", cancellationToken: ct);
         else if (isTeacher)
-            await _botClient.SendMessage(chatId, $"👤 {teacher!.Name}\n👨‍🏫 Учитель\n🆔 ID: {chatId}", cancellationToken: ct);
+            await _botClient.SendMessage(chatId, $"👤 {teacher!.Name}\n👨‍🏫 Учитель\n{(string.IsNullOrEmpty(teacher.Username) ? "" : $"👤 Username: {teacher.Username}\n")}🆔 ID: {chatId}", cancellationToken: ct);
         else
             await _botClient.SendMessage(chatId, $"🆔 ID: {chatId}", cancellationToken: ct);
     }
