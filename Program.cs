@@ -22,7 +22,6 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 ILogger<BotHandler> botLogger = loggerFactory.CreateLogger<BotHandler>();
 
 using var cts = new CancellationTokenSource();
-
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -34,7 +33,6 @@ try
 {
     var token = Environment.GetEnvironmentVariable("BOT_TOKEN")
         ?? throw new Exception("BOT_TOKEN не задан!");
-
     var appUrl = Environment.GetEnvironmentVariable("APP_URL")
         ?? throw new Exception("APP_URL не задан!");
 
@@ -60,8 +58,8 @@ try
         {
             try
             {
-                await httpClient.GetAsync(appUrl, cts.Token);
-                // Console.WriteLine("[Self-ping] OK");
+                var response = await httpClient.GetAsync(appUrl, cts.Token);
+                // Console.WriteLine($"[Self-ping] Status: {response.StatusCode}");
             }
             catch (Exception ex)
             {
@@ -87,27 +85,7 @@ try
 
     var botHandler = new BotHandler(bot, backup, botLogger);
 
-    // Self-ping to prevent Render from sleeping
-    _ = Task.Run(async () =>
-    {
-        using var httpClient = new HttpClient();
-        while (!cts.Token.IsCancellationRequested)
-        {
-            try
-            {
-                await httpClient.GetAsync(appUrl, cts.Token);
-                // Console.WriteLine("[Self-ping] OK");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Self-ping] Error: {ex.Message}");
-            }
-            await Task.Delay(TimeSpan.FromSeconds(49), cts.Token);
-        }
-    });
-
     Console.WriteLine("BOT STARTING...");
-
     string webhookUrl = $"{appUrl.TrimEnd('/')}/bot";
     await bot.SetWebhook(webhookUrl, cancellationToken: cts.Token);
     Console.WriteLine($"Webhook установлен: {webhookUrl}");
@@ -143,12 +121,21 @@ async Task RunWebServer(ITelegramBotClient bot, BotHandler handler, Cancellation
             var req = context.Request;
             var res = context.Response;
 
+            if (req.HttpMethod == "GET" && (req.Url?.AbsolutePath == "/" || req.Url?.AbsolutePath == ""))
+            {
+                res.StatusCode = 200;
+                byte[] responseBytes = Encoding.UTF8.GetBytes("Bot is running...");
+                res.ContentLength64 = responseBytes.Length;
+                await res.OutputStream.WriteAsync(responseBytes, ct);
+                res.OutputStream.Close();
+                continue;
+            }
+
             if (req.HttpMethod == "GET" && req.Url?.AbsolutePath == "/getdb")
             {
                 var key       = req.QueryString["key"];
                 var secretKey = Environment.GetEnvironmentVariable("DB_KEY");
                 if (key != secretKey) { res.StatusCode = 403; res.OutputStream.Close(); continue; }
-
                 byte[] dbBytes = await File.ReadAllBytesAsync("school.db");
                 res.ContentType = "application/octet-stream";
                 res.AddHeader("Content-Disposition", "attachment; filename=school.db");
@@ -164,7 +151,6 @@ async Task RunWebServer(ITelegramBotClient bot, BotHandler handler, Cancellation
                 string json = await reader.ReadToEndAsync();
                 res.StatusCode = 200;
                 res.OutputStream.Close();
-
                 _ = Task.Run(async () =>
                 {
                     try
