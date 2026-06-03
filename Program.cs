@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -49,6 +50,26 @@ try
 
     // Миграция — создаём новые таблицы и колонки если их нет
     DbMigrator.Migrate();
+
+    // Self-ping to prevent Render from sleeping
+    _ = Task.Run(async () =>
+    {
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(15);
+        while (!cts.Token.IsCancellationRequested)
+        {
+            try
+            {
+                await httpClient.GetAsync(appUrl, cts.Token);
+                // Console.WriteLine("[Self-ping] OK");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Self-ping] Error: {ex.Message}");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(49), cts.Token);
+        }
+    });
 
     _ = Task.Run(async () =>
     {
