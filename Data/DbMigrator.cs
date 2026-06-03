@@ -55,6 +55,19 @@ public static class DbMigrator
             IsPresent INTEGER NOT NULL DEFAULT 1
         )");
 
+        // Таблица DailySchedules
+        ExecuteNonQuery(conn, @"CREATE TABLE IF NOT EXISTS DailySchedules (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Date TEXT NOT NULL DEFAULT '',
+            ClassName TEXT NOT NULL DEFAULT '',
+            LessonNumber INTEGER NOT NULL DEFAULT 0,
+            Subject TEXT NOT NULL DEFAULT '',
+            StartTime TEXT NOT NULL DEFAULT '',
+            EndTime TEXT NOT NULL DEFAULT '',
+            TeacherName TEXT NOT NULL DEFAULT '',
+            IsModified INTEGER NOT NULL DEFAULT 0
+        )");
+
         // Таблица Polls
         ExecuteNonQuery(conn, @"CREATE TABLE IF NOT EXISTS Polls (
             Id INTEGER PRIMARY KEY AUTOINCREMENT,

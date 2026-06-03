@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -65,6 +66,25 @@ try
     _ = alarm.RunAsync(cts.Token);
 
     var botHandler = new BotHandler(bot, backup, botLogger);
+
+    // Self-ping to prevent Render from sleeping
+    _ = Task.Run(async () =>
+    {
+        using var httpClient = new HttpClient();
+        while (!cts.Token.IsCancellationRequested)
+        {
+            try
+            {
+                await httpClient.GetAsync(appUrl, cts.Token);
+                // Console.WriteLine("[Self-ping] OK");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Self-ping] Error: {ex.Message}");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(49), cts.Token);
+        }
+    });
 
     Console.WriteLine("BOT STARTING...");
 
