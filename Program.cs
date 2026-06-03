@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -66,6 +67,26 @@ try
 
     var botHandler = new BotHandler(bot, backup, botLogger);
 
+    // Self-ping to prevent Render from sleeping
+    _ = Task.Run(async () =>
+    {
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(15);
+        while (!cts.Token.IsCancellationRequested)
+        {
+            try
+            {
+                var response = await httpClient.GetAsync(appUrl, cts.Token);
+                // Console.WriteLine($"[Self-ping] Status: {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Self-ping] Error: {ex.Message}");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(49), cts.Token);
+        }
+    });
+
     Console.WriteLine("BOT STARTING...");
 
     string webhookUrl = $"{appUrl.TrimEnd('/')}/bot";
@@ -102,6 +123,16 @@ async Task RunWebServer(ITelegramBotClient bot, BotHandler handler, Cancellation
             var context = await listener.GetContextAsync();
             var req = context.Request;
             var res = context.Response;
+
+            if (req.HttpMethod == "GET" && (req.Url?.AbsolutePath == "/" || req.Url?.AbsolutePath == ""))
+            {
+                res.StatusCode = 200;
+                byte[] responseBytes = Encoding.UTF8.GetBytes("Bot is running...");
+                res.ContentLength64 = responseBytes.Length;
+                await res.OutputStream.WriteAsync(responseBytes, ct);
+                res.OutputStream.Close();
+                continue;
+            }
 
             if (req.HttpMethod == "GET" && req.Url?.AbsolutePath == "/getdb")
             {

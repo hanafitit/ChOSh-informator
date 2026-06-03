@@ -31,6 +31,14 @@ public static class KeyboardHelper
         })
         { ResizeKeyboard = true };
 
+    public static ReplyKeyboardMarkup ScheduleCheckKeyboard() =>
+        new(new[]
+        {
+            new[] { new KeyboardButton("✏️ Редактировать"), new KeyboardButton("✅ Подтвердить и разослать") },
+            new[] { new KeyboardButton("⬅️ Назад") }
+        })
+        { ResizeKeyboard = true };
+
     public static ReplyKeyboardMarkup TeacherKeyboard(Teacher t)
     {
         var rows = new List<KeyboardButton[]>
