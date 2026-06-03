@@ -22,7 +22,6 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 ILogger<BotHandler> botLogger = loggerFactory.CreateLogger<BotHandler>();
 
 using var cts = new CancellationTokenSource();
-
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -34,7 +33,6 @@ try
 {
     var token = Environment.GetEnvironmentVariable("BOT_TOKEN")
         ?? throw new Exception("BOT_TOKEN не задан!");
-
     var appUrl = Environment.GetEnvironmentVariable("APP_URL")
         ?? throw new Exception("APP_URL не задан!");
 
@@ -50,22 +48,6 @@ try
 
     // Миграция — создаём новые таблицы и колонки если их нет
     DbMigrator.Migrate();
-
-    _ = Task.Run(async () =>
-    {
-        while (!cts.Token.IsCancellationRequested)
-        {
-            var now  = DateTime.UtcNow;
-            var next = DateTime.UtcNow.Date.AddDays(now.Hour >= 3 ? 1 : 0).AddHours(3);
-            await Task.Delay(next - now, cts.Token);
-            await backup.BackupAsync();
-        }
-    });
-
-    var alarm = new AlarmService(bot);
-    _ = alarm.RunAsync(cts.Token);
-
-    var botHandler = new BotHandler(bot, backup, botLogger);
 
     // Self-ping to prevent Render from sleeping
     _ = Task.Run(async () =>
@@ -87,8 +69,23 @@ try
         }
     });
 
-    Console.WriteLine("BOT STARTING...");
+    _ = Task.Run(async () =>
+    {
+        while (!cts.Token.IsCancellationRequested)
+        {
+            var now  = DateTime.UtcNow;
+            var next = DateTime.UtcNow.Date.AddDays(now.Hour >= 3 ? 1 : 0).AddHours(3);
+            await Task.Delay(next - now, cts.Token);
+            await backup.BackupAsync();
+        }
+    });
 
+    var alarm = new AlarmService(bot);
+    _ = alarm.RunAsync(cts.Token);
+
+    var botHandler = new BotHandler(bot, backup, botLogger);
+
+    Console.WriteLine("BOT STARTING...");
     string webhookUrl = $"{appUrl.TrimEnd('/')}/bot";
     await bot.SetWebhook(webhookUrl, cancellationToken: cts.Token);
     Console.WriteLine($"Webhook установлен: {webhookUrl}");
@@ -139,7 +136,6 @@ async Task RunWebServer(ITelegramBotClient bot, BotHandler handler, Cancellation
                 var key       = req.QueryString["key"];
                 var secretKey = Environment.GetEnvironmentVariable("DB_KEY");
                 if (key != secretKey) { res.StatusCode = 403; res.OutputStream.Close(); continue; }
-
                 byte[] dbBytes = await File.ReadAllBytesAsync("school.db");
                 res.ContentType = "application/octet-stream";
                 res.AddHeader("Content-Disposition", "attachment; filename=school.db");
@@ -155,7 +151,6 @@ async Task RunWebServer(ITelegramBotClient bot, BotHandler handler, Cancellation
                 string json = await reader.ReadToEndAsync();
                 res.StatusCode = 200;
                 res.OutputStream.Close();
-
                 _ = Task.Run(async () =>
                 {
                     try

@@ -508,7 +508,9 @@ public class BotHandler
             if (session.State == "teacher_add_homeroom")
             {
                 if (text == null) return true;
-                session.TempData["homeroom"] = text == "Нет" ? "" : text;
+                string homeroom = text == "Нет" ? "" : text;
+                if (new[] { "1", "2", "3", "4", "5-6", "7", "8", "9", "10", "11" }.Contains(homeroom)) homeroom += " класс";
+                session.TempData["homeroom"] = homeroom;
                 session.State = "teacher_add_subjects";
                 await _botClient.SendMessage(chatId,
                     "Введи предметы и классы которые ведёт учитель.\n" +
@@ -566,11 +568,13 @@ public class BotHandler
                     var parts = line.Split('|');
                     if (parts.Length == 2)
                     {
+                        string subClassName = parts[1].Trim();
+                        if (new[] { "1", "2", "3", "4", "5-6", "7", "8", "9", "10", "11" }.Contains(subClassName)) subClassName += " класс";
                         db.TeacherSubjects.Add(new TeacherSubject
                         {
                             TeacherName = tname,
                             Subject = parts[0].Trim(),
-                            ClassName = parts[1].Trim()
+                            ClassName = subClassName
                         });
                         added++;
                     }
@@ -623,10 +627,11 @@ public class BotHandler
         {
             string name = session.Name;
             string className = text;
+            if (new[] { "1", "2", "3", "4", "5-6", "7", "8", "9", "10", "11" }.Contains(className)) className += " класс";
             db.Users.Add(new ЧОШ_информатор.Models.User { TelegramId = chatId, FirstName = name, ClassName = className, Role = "student" });
             db.SaveChanges();
             session.Reset();
-            string display = className == "5-6 класс" ? "5-6" : className;
+            string display = className.Replace(" класс", "");
             await _botClient.SendMessage(chatId,
                 $"✅ Готово, {name}! Ты зарегистрирован в {display} классе.",
                 replyMarkup: KeyboardHelper.MainKeyboard(), cancellationToken: ct);
